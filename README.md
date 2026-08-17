@@ -104,6 +104,46 @@ python scripts/voice_control.py --config configs/demo.json
 python scripts/voice_control.py --config configs/demo.json --mic 2
 ```
 
+### 本地麦克风控制远程服务器
+
+普通 SSH 不会把本地麦克风设备映射到服务器。推荐在身边的电脑运行语音模块，通过 SSH 只发送识别后的动作命令；服务器继续运行 MuJoCo。
+
+服务器终端：
+
+```bash
+cd /absolute/path/to/tienkung_dex_multi_policy_demo
+python run_sim.py --config configs/demo.json
+```
+
+本地电脑先验证免密 SSH，避免动作线程等待密码：
+
+```bash
+ssh-copy-id USER@SERVER_IP
+ssh USER@SERVER_IP true
+```
+
+本地电脑克隆本仓库并安装语音依赖后，先用文字测试远程链路：
+
+```bash
+python scripts/voice_control.py \
+  --config configs/demo.json \
+  --text \
+  --ssh-target USER@SERVER_IP \
+  --remote-project /absolute/path/to/tienkung_dex_multi_policy_demo
+```
+
+确认输入“鞠躬”或“挥手”可以控制服务器后，再启动本地麦克风：
+
+```bash
+export DASHSCOPE_API_KEY="你的真实 DashScope API Key"
+python scripts/voice_control.py \
+  --config configs/demo.json \
+  --ssh-target USER@SERVER_IP \
+  --remote-project /absolute/path/to/tienkung_dex_multi_policy_demo
+```
+
+`--remote-project` 必须是服务器上的绝对路径。远程发送脚本只依赖 Python 标准库，默认使用服务器的 `python3`；需要指定解释器时增加 `--remote-python /path/to/python`。
+
 语音进程与 MuJoCo 通过 `/tmp/tienkung_dex_commands.jsonl` 通信。也可手动从另一个终端发命令：
 
 ```bash

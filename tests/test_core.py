@@ -5,12 +5,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from tienkung_demo.command_bus import CommandReader, CommandWriter
+from tienkung_demo.command_bus import CommandReader, CommandWriter, SshCommandWriter
 from tienkung_demo.config import load_config
 from tienkung_demo.voice import infer_text_actions
 
@@ -38,6 +39,16 @@ class CommandBusTests(unittest.TestCase):
             CommandWriter(path, source="test").send("A", "bow")
             self.assertEqual(reader.read(), [("a", "test")])
             self.assertEqual(reader.read(), [])
+
+    @patch("tienkung_demo.command_bus.subprocess.run")
+    def test_ssh_writer_forwards_to_remote_send_script(self, run) -> None:
+        writer = SshCommandWriter("robot@server", "/srv/tienkung_demo")
+        writer.send("A", "bow")
+        args = run.call_args.args[0]
+        self.assertEqual(args[0:2], ["ssh", "robot@server"])
+        self.assertIn("/srv/tienkung_demo/scripts/send_command.py", args[2])
+        self.assertIn("--source voice-ssh", args[2])
+        run.assert_called_once_with(args, check=True)
 
 
 if __name__ == "__main__":

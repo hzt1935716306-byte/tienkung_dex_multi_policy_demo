@@ -17,10 +17,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Send one command to the running simulator")
     parser.add_argument("command", help="a, b, r, q, 8, 2, 4, 6, 7, 9, or 5")
     parser.add_argument("--config", default=str(ROOT / "configs" / "demo.json"))
+    parser.add_argument("--source", default="manual", help="Command source recorded in the JSONL bus")
+    parser.add_argument("--label", default="manual", help="Optional human-readable command label")
     args = parser.parse_args()
     config = load_config(args.config)
-    writer = CommandWriter(config["command_file"], source="manual")
-    writer.send(args.command, "manual")
+    writer = CommandWriter(config["command_file"], source=args.source)
+    writer.send(args.command, args.label)
     print(f"[INFO] sent {args.command.lower()!r} to {writer.path}")
 
 

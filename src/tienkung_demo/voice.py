@@ -12,10 +12,10 @@ from .command_bus import CommandWriter
 
 
 class ActionManager:
-    def __init__(self, config: dict[str, Any]):
+    def __init__(self, config: dict[str, Any], writer=None):
         self.config = config
         self.command_file = config.get("command_file", "/tmp/tienkung_dex_commands.jsonl")
-        self.writer = CommandWriter(self.command_file, source="voice")
+        self.writer = writer or CommandWriter(self.command_file, source="voice")
         self.control_dt = float(config.get("simulation", {}).get("control_dt", 0.01))
         simulation = config.get("simulation", {})
         self.transition_time = float(simulation.get("transition_time", 0.5))
@@ -48,11 +48,15 @@ class ActionManager:
             except queue.Empty:
                 continue
             motion = self.config["motions"][key]
-            self.writer.send(key, motion["display_name"])
-            duration = float(motion["duration_steps"]) * self.control_dt
-            print(f"[ACTION] sent {key}, waiting {duration:.2f}s for motion completion")
-            self._wait(duration + self.transition_time + self.return_time + self.return_delay)
-            self.queue.task_done()
+            try:
+                self.writer.send(key, motion["display_name"])
+                duration = float(motion["duration_steps"]) * self.control_dt
+                print(f"[ACTION] sent {key}, waiting {duration:.2f}s for motion completion")
+                self._wait(duration + self.transition_time + self.return_time + self.return_delay)
+            except Exception as exc:
+                print(f"[ACTION ERROR] failed to send {key}: {exc}")
+            finally:
+                self.queue.task_done()
 
     def stop(self) -> None:
         self.running = False
@@ -69,8 +73,8 @@ def infer_text_actions(text: str, config: dict[str, Any]) -> list[str]:
     return matches
 
 
-def run_text_demo(config: dict[str, Any]) -> None:
-    actions = ActionManager(config)
+def run_text_demo(config: dict[str, Any], writer=None) -> None:
+    actions = ActionManager(config, writer)
     examples = " / ".join(motion["voice_keywords"][0] for motion in config["motions"].values())
     print(f"[TEXT] 输入动作描述（例如：{examples}），或直接输入动作键。输入 q 退出。")
     try:
@@ -130,7 +134,7 @@ def connect_conversation(conversation, timeout: float) -> None:
     raise TimeoutError(f"DashScope websocket did not connect within {timeout:.1f}s")
 
 
-def run_voice_demo(config: dict[str, Any], mic_device: int | None = None) -> None:
+def run_voice_demo(config: dict[str, Any], mic_device: int | None = None, writer=None) -> None:
     api_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError('请先设置环境变量：export DASHSCOPE_API_KEY="你的 DashScope API Key"')
@@ -149,7 +153,7 @@ def run_voice_demo(config: dict[str, Any], mic_device: int | None = None) -> Non
 
     dashscope.api_key = api_key
     voice_config = config.get("voice", {})
-    actions = ActionManager(config)
+    actions = ActionManager(config, writer)
 
     class Callback(OmniRealtimeCallback):
         def __init__(self, audio):

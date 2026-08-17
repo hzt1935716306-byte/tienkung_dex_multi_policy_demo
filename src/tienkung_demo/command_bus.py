@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import posixpath
+import shlex
+import subprocess
 import time
 from pathlib import Path
 
@@ -23,6 +26,53 @@ class CommandWriter:
         }
         with self.path.open("a", encoding="utf-8") as file:
             file.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+class SshCommandWriter:
+    """Forward commands to a simulator running on another machine over SSH."""
+
+    def __init__(
+        self,
+        target: str,
+        remote_project: str,
+        remote_python: str = "python3",
+        remote_config: str = "configs/demo.json",
+        source: str = "voice-ssh",
+    ):
+        if not target.strip():
+            raise ValueError("SSH target cannot be empty.")
+        if not remote_project.startswith("/"):
+            raise ValueError("Remote project path must be absolute.")
+        self.target = target.strip()
+        self.remote_project = remote_project.rstrip("/")
+        self.remote_python = remote_python
+        self.remote_config = remote_config
+        self.source = source
+
+    def send(self, command: str, label: str = "") -> None:
+        command = command.strip().lower()
+        if not command:
+            return
+        script = posixpath.join(self.remote_project, "scripts", "send_command.py")
+        config = (
+            self.remote_config
+            if self.remote_config.startswith("/")
+            else posixpath.join(self.remote_project, self.remote_config)
+        )
+        remote_command = shlex.join(
+            [
+                self.remote_python,
+                script,
+                command,
+                "--config",
+                config,
+                "--source",
+                self.source,
+                "--label",
+                label,
+            ]
+        )
+        subprocess.run(["ssh", self.target, remote_command], check=True)
 
 
 class CommandReader:
