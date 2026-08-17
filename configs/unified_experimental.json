@@ -1,0 +1,62 @@
+{
+  "experimental": true,
+  "compatibility_warning": "The walk and motion checkpoints were trained with different robot action spaces. This one-window configuration is diagnostic only.",
+  "model": "../assets/mjcf/dex_evt_full.xml",
+  "walk_policy": "../policies/walk.onnx",
+  "command_file": "/tmp/tienkung_dex_commands.jsonl",
+  "walk": {
+    "policy_dt": 0.02,
+    "gait_cycle": 0.85,
+    "phase_ratio": [0.38, 0.38],
+    "phase_offset": [0.38, 0.88],
+    "torque_scale": 1.0,
+    "effort_scale": 1.0
+  },
+  "motions": {
+    "a": {
+      "name": "bow",
+      "display_name": "鞠躬",
+      "path": "../policies/bow.onnx",
+      "duration_steps": 556,
+      "start_step": 0,
+      "control_mode": "policy",
+      "torque_scale": 1.0,
+      "effort_scale": 1.0,
+      "voice_keywords": ["鞠躬", "谢谢", "感谢", "问好", "道歉", "对不起"]
+    },
+    "b": {
+      "name": "right_hand_open",
+      "display_name": "右手摊开/摆手",
+      "path": "../policies/right_hand_open.onnx",
+      "duration_steps": 685,
+      "start_step": 0,
+      "control_mode": "policy",
+      "torque_scale": 1.0,
+      "effort_scale": 1.0,
+      "voice_keywords": ["摆手", "挥手", "欢迎", "再见", "打招呼", "你好"]
+    }
+  },
+  "simulation": {
+    "baseline_mode": "walk",
+    "sim_dt": 0.001,
+    "control_dt": 0.01,
+    "solver_iterations": 100,
+    "transition_time": 0.01,
+    "joint_armature": 0.03,
+    "joint_frictionloss": 0.1,
+    "initial_height": 0.95,
+    "ground_clearance": 0.015,
+    "fall_threshold": 0.2,
+    "max_steps": 100000,
+    "debug": true,
+    "debug_interval": 25,
+    "realtime": true,
+    "no_viewer": false
+  },
+  "voice": {
+    "model": "qwen3.5-omni-plus-realtime",
+    "voice": "Liora Mira",
+    "connect_timeout": 30,
+    "return_delay": 0.5
+  }
+}

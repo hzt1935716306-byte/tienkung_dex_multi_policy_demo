@@ -1,0 +1,186 @@
+# TienKung Dex Multi-Policy MuJoCo Demo
+
+这是一个可独立运行、可直接上传 GitHub 的 TienKung 机器人演示工程。它已经把模型、ONNX 策略、MuJoCo 控制器、JSON 配置、键盘命令和 DashScope 语音控制整理到同一个目录，不依赖原始 IsaacLab 训练仓库运行。
+
+## 当前能力
+
+| 入口 | 机器人模型 | 功能 | 验证状态 |
+| --- | --- | --- | --- |
+| `configs/demo.json` | Dex EVT Liondance，19 DOF | 单窗口静止稳定、键盘行走、`a` 鞠躬、`b` 摆手、外部命令 | 已验证 |
+| `configs/walk_only.json` | TienKung2 Lite，20 DOF | 原生行走策略诊断 | 已验证 |
+| `configs/unified_experimental.json` | Dex EVT，29 DOF | 单窗口尝试同时加载行走和动作 | 不稳定，仅供诊断 |
+
+重要：三个 checkpoint 并不是在同一个 action space 上训练的。本项目在 19-DOF 动作模型上运行全部策略，行走策略多出的 4 个肩 roll/yaw 输出保留在观测历史中但不施加到固定关节，腰部在行走期间由 PD 保持。该适配已通过 MuJoCo 连续切换测试；实机部署前仍应按 [策略兼容说明](docs/POLICY_COMPATIBILITY.md) 做限幅和低增益测试。
+
+## 目录结构
+
+```text
+.
+├── assets/                 # 19-DOF 动作模型、20-DOF 行走模型及网格
+├── configs/                # 所有命令行参数、策略和动作标签
+├── docs/                   # 架构与兼容性说明
+├── policies/               # 已导出的 ONNX 策略
+├── scripts/                # 环境检查、语音控制、手动发命令
+├── src/tienkung_demo/      # 控制器源码
+├── run_sim.py              # MuJoCo 主入口
+└── setup.sh                # 安装脚本
+```
+
+## 1. 从零安装
+
+推荐 Ubuntu 22.04、Python 3.10，并使用独立 Conda 环境：
+
+```bash
+cd /path/to/tienkung_dex_multi_policy_demo
+
+conda create -n tienkung_demo python=3.10 -y
+conda activate tienkung_demo
+
+chmod +x setup.sh
+./setup.sh
+python scripts/check_setup.py --smoke
+```
+
+安装语音功能：
+
+```bash
+sudo apt update
+sudo apt install -y portaudio19-dev
+./setup.sh --voice
+```
+
+已有环境也可指定 Python：
+
+```bash
+PYTHON_BIN=/path/to/conda/envs/tienkung_demo/bin/python ./setup.sh
+```
+
+## 2. 运行单窗口完整 Demo
+
+一条命令启动静止稳定、键盘行走、动作和外部命令接收：
+
+```bash
+python run_sim.py --config configs/demo.json
+```
+
+仿真窗口按键：
+
+| 按键 | 动作 |
+| --- | --- |
+| `8` / `2` | 前进 / 后退 |
+| `4` / `6` | 左移 / 右移 |
+| `7` / `9` | 左转 / 右转 |
+| `5` | 行走速度清零并进入静止稳定 |
+| `a` | 鞠躬 |
+| `b` | 右手摊开/摆手 |
+| `r` | 中止当前动作并平滑回到行走 |
+| `q` | 退出 |
+
+零速度时使用动作策略第 0 帧作为学习型稳定器，因此不会让周期行走策略持续原地踏步。有速度命令时自动平滑切入行走策略；按 `5`、触发动作或动作结束时自动平滑切回静止稳定器。动作返回不再先回放动作首帧，避免无平衡阶段导致倒地。整个过程保持在同一个 MuJoCo 窗口中。
+
+`configs/demo.json` 中的 `simulation.idle_motion_key` 指定静止稳定器使用哪个动作，当前为 `b`。如果清空该值，零速时会退回行走策略加 PI 定点保持，此时仍可能有轻微踏步。
+
+不连接网络和麦克风时，可先在终端 2 测试文字触发：
+
+```bash
+python scripts/voice_control.py --config configs/demo.json --text
+```
+
+可识别的示例语义：
+
+- 鞠躬：`请鞠个躬`、`谢谢您`、`向大家问好`、`对不起`
+- 摆手：`请挥挥手`、`欢迎大家`、`再见`、`打个招呼`、`你好`
+
+启动 DashScope 实时语音：
+
+```bash
+export DASHSCOPE_API_KEY="你的真实 DashScope API Key"
+python scripts/voice_control.py --config configs/demo.json
+```
+
+指定麦克风索引：
+
+```bash
+python scripts/voice_control.py --config configs/demo.json --mic 2
+```
+
+语音进程与 MuJoCo 通过 `/tmp/tienkung_dex_commands.jsonl` 通信。也可手动从另一个终端发命令：
+
+```bash
+python scripts/send_command.py a
+python scripts/send_command.py b
+python scripts/send_command.py r
+```
+
+## 3. 单独诊断原生行走策略
+
+```bash
+python run_sim.py --config configs/walk_only.json
+```
+
+| 按键 | 行走命令 |
+| --- | --- |
+| `8` / `2` | 增加前进 / 后退速度 |
+| `4` / `6` | 增加左移 / 右移速度 |
+| `7` / `9` | 增加左转 / 右转角速度 |
+| `5` | 速度清零 |
+| `q` | 退出 |
+
+主键盘数字和数字小键盘均可使用。每次按键按固定步长累加速度，控制台会打印当前 `vx`、`vy` 和 `yaw`。正常演示请优先使用 `configs/demo.json`；`walk_only.json` 只用于对照原始 20-DOF 行走模型。
+
+## 4. 无界面测试
+
+```bash
+python run_sim.py --config configs/demo.json \
+  --no-viewer --auto-motion a --auto-motion-after 100 --max-steps 800
+
+python run_sim.py --config configs/demo.json \
+  --no-viewer --auto-motion b --auto-motion-after 100 --max-steps 950
+
+python run_sim.py --config configs/walk_only.json \
+  --no-viewer --max-steps 1000
+```
+
+## 5. 修改动作和配置
+
+所有演示参数都在 `configs/demo.json` 中。新增动作时，把 ONNX 放入 `policies/`，然后增加一个单字符键：
+
+```json
+"c": {
+  "name": "new_motion",
+  "display_name": "新动作",
+  "path": "../policies/new_motion.onnx",
+  "duration_steps": 500,
+  "start_step": 0,
+  "control_mode": "policy",
+  "torque_scale": 1.0,
+  "effort_scale": 1.0,
+  "voice_keywords": ["新动作", "演示一下"]
+}
+```
+
+ONNX 必须带有本项目使用的 BeyondMimic 元数据：`joint_names`、`joint_stiffness`、`joint_damping`、`default_joint_pos` 和 `action_scale`。
+
+## 6. 策略来源
+
+- `policies/bow.onnx`：由 `2026-08-16_00-02-03_bow_skeleton1/model_9999.pt` 导出。
+- `policies/right_hand_open.onnx`：由 `2026-08-16_00-04-49_右手摊开1_Skeleton2/model_9999.pt` 导出。
+- `policies/walk.onnx`：由 `2026-08-16_17-28-17/model_49999.pt` 对应的 TienKung-Lab 导出策略提供。
+
+运行时只需要 ONNX，不需要把 `.pt` checkpoint 或原训练仓库一起复制。
+
+## 7. 常见问题
+
+`ModuleNotFoundError`：确认已在项目根目录执行 `./setup.sh`，并使用同一个 Conda 环境运行。
+
+MuJoCo 窗口打不开：确认当前终端具有桌面会话和 `DISPLAY`；服务器上改用 `--no-viewer`。默认 MJCF 已包含天空、棋盘地面、环境光和双向补光；若窗口仍全黑，检查显卡驱动及 `MUJOCO_GL` 设置。
+
+`No module named pyaudio`：安装 `portaudio19-dev` 后重新执行 `./setup.sh --voice`。
+
+DashScope websocket 超时：检查 API Key、网络、代理和防火墙；先用 `--text` 验证动作链路。
+
+实验性 29-DOF 联合配置中机器人倒地：请使用默认的 19-DOF `configs/demo.json` 适配方案；长期实机部署仍建议统一机器人定义后重新训练或微调。
+
+## License
+
+源码按 BSD 3-Clause 许可发布。机器人资产和训练权重的来源与再分发注意事项见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

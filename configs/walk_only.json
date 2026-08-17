@@ -1,0 +1,29 @@
+{
+  "model": "../assets/mjcf/tienkung.xml",
+  "walk_policy": "../policies/walk.onnx",
+  "command_file": "/tmp/tienkung_dex_commands.jsonl",
+  "walk": {
+    "policy_dt": 0.02,
+    "gait_cycle": 0.85,
+    "phase_ratio": [0.38, 0.38],
+    "phase_offset": [0.38, 0.88],
+    "torque_scale": 1.0,
+    "effort_scale": 1.0
+  },
+  "motions": {},
+  "simulation": {
+    "baseline_mode": "walk",
+    "sim_dt": 0.001,
+    "control_dt": 0.01,
+    "solver_iterations": 100,
+    "transition_time": 0.5,
+    "initial_height": 0.95,
+    "ground_clearance": 0.015,
+    "fall_threshold": 0.2,
+    "max_steps": 100000,
+    "debug": true,
+    "debug_interval": 25,
+    "realtime": true,
+    "no_viewer": false
+  }
+}
