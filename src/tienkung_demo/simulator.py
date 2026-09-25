@@ -334,14 +334,36 @@ def handle_command(controller: MultiPolicyController, command: str, source: str)
         controller.request_motion(command, source)
 
 
+GAME_KEY_COMMANDS = {
+    "w": "8",
+    "s": "2",
+    "a": "4",
+    "d": "6",
+    "q": "7",
+    "e": "9",
+    " ": "5",
+    "j": "a",
+    "k": "b",
+}
+
+
+def command_from_keycode(keycode: int) -> str | None:
+    if 320 <= keycode <= 329:
+        return str(keycode - 320)
+    if keycode == 256:  # GLFW_KEY_ESCAPE
+        return "q"
+    if 0 <= keycode < 256:
+        character = chr(keycode).lower()
+        return GAME_KEY_COMMANDS.get(character, character)
+    return None
+
+
 def key_callback(controller: MultiPolicyController):
-    keypad = {320 + number: str(number) for number in range(10)}
 
     def callback(keycode: int) -> None:
-        if keycode in keypad:
-            handle_command(controller, keypad[keycode], "keyboard")
-        elif 0 <= keycode < 256:
-            handle_command(controller, chr(keycode), "keyboard")
+        command = command_from_keycode(keycode)
+        if command is not None:
+            handle_command(controller, command, "keyboard")
 
     return callback
 
@@ -443,11 +465,15 @@ def run(argv: list[str] | None = None) -> None:
     print(f"[INFO] command file: {command_file}")
     print(f"[INFO] baseline mode: {baseline_mode}")
     if baseline_mode == "walk":
-        print("[INFO] controls: 8/2 forward/back, 4/6 lateral, 7/9 yaw, 5 stop")
+        print("[INFO] controls: W/S forward/back, A/D lateral, Q/E yaw, Space stop")
+        if motions:
+            print("[INFO] actions: J=bow, K=wave, R=return, Esc=quit")
+        else:
+            print("[INFO] Esc=quit")
         if idle_motion is not None:
             print(f"[INFO] zero-speed stabilizer: {idle_motion.name} frame 0")
     print(f"[INFO] motions: {', '.join(f'{key}={policy.name}' for key, policy in motions.items())}")
-    print(f"[INFO] r=return to {baseline_mode}, q=quit")
+    print(f"[INFO] external commands: r=return to {baseline_mode}, q=quit")
 
     def step_once(step: int) -> bool:
         if no_viewer and args.auto_motion and step == args.auto_motion_after:

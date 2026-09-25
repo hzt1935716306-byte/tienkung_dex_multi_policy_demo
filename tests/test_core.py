@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from tienkung_demo.command_bus import CommandReader, CommandWriter, SshCommandWriter
 from tienkung_demo.config import load_config
+from tienkung_demo.simulator import command_from_keycode
 from tienkung_demo.voice import infer_text_actions
 
 
@@ -28,6 +29,18 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(infer_text_actions("请向大家鞠躬", config), ["a"])
         self.assertEqual(infer_text_actions("欢迎大家，挥挥手", config), ["b"])
         self.assertEqual(infer_text_actions("没有动作", config), [])
+
+    def test_game_keyboard_mapping(self) -> None:
+        self.assertEqual(command_from_keycode(ord("W")), "8")
+        self.assertEqual(command_from_keycode(ord("S")), "2")
+        self.assertEqual(command_from_keycode(ord("A")), "4")
+        self.assertEqual(command_from_keycode(ord("D")), "6")
+        self.assertEqual(command_from_keycode(ord("Q")), "7")
+        self.assertEqual(command_from_keycode(ord("E")), "9")
+        self.assertEqual(command_from_keycode(ord(" ")), "5")
+        self.assertEqual(command_from_keycode(ord("J")), "a")
+        self.assertEqual(command_from_keycode(ord("K")), "b")
+        self.assertEqual(command_from_keycode(256), "q")
 
 
 class CommandBusTests(unittest.TestCase):
