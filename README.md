@@ -50,6 +50,8 @@ python scripts/run_motion_evt2_headless_suite.py --config configs/motion_evt2.js
 
 参考轨迹在官方动力学模型中会跌倒，但两个反馈策略均可完成完整轨迹；因此参考模式的失败不会被误报成策略失败或策略成功。映射、日志、测试结果及限制见 [BeyondMimic EVT2 第二阶段文档](docs/MOTION_EVT2_PHASE2.md)。
 
+动作入口固定使用训练名义 PD，不依赖 ONNX 导出时随机写入的环境增益。超出关节范围的策略期望角仍会被裁剪，但被裁掉的位置误差会转换为受力矩限幅约束的等效前馈，从而与 IsaacLab 隐式 PD 的控制语义一致。
+
 ## 目录结构
 
 ```text

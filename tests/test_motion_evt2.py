@@ -14,6 +14,7 @@ if str(SRC) not in sys.path:
 
 from tienkung_demo.motion_evt2 import (
     MOTION_EVT2_JOINT_NAMES,
+    TRAINING_NOMINAL_GAINS,
     MotionEvt2Policy,
     load_motion_evt2_config,
 )
@@ -46,7 +47,8 @@ class MotionEvt2Tests(unittest.TestCase):
             self.config["simulation"]["control_dt"],
         )
         hold_target = walkamp.neutral_target("test_hold")
-        motion_config = dict(self.config["motions"][key])
+        motion_config = dict(self.config.get("motion_control", {}))
+        motion_config.update(self.config["motions"][key])
         motion_config["control_mode"] = mode
         motion = MotionEvt2Policy(
             self.model,
@@ -95,6 +97,38 @@ class MotionEvt2Tests(unittest.TestCase):
         np.testing.assert_array_equal(target.kd[indices], hold_target.kd[indices])
         np.testing.assert_array_equal(target.effort[indices], hold_target.effort[indices])
         self.assertTrue(np.all(target.effort[indices] > 0.0))
+
+    def test_training_nominal_gain_profile_is_deterministic(self) -> None:
+        _, motion, _ = self.build_policy()
+        expected_kp = np.asarray(
+            [TRAINING_NOMINAL_GAINS[name][0] for name in motion.joint_names]
+        )
+        expected_kd = np.asarray(
+            [TRAINING_NOMINAL_GAINS[name][1] for name in motion.joint_names]
+        )
+        np.testing.assert_array_equal(motion.kp, expected_kp)
+        np.testing.assert_array_equal(motion.kd, expected_kd)
+
+    def test_clipped_target_preserves_training_pd_effort(self) -> None:
+        data, motion, _ = self.build_policy()
+        ankle_policy_index = motion.joint_names.index("ankle_pitch_l_joint")
+        ankle_model_index = self.joint_map.index["ankle_pitch_l_joint"]
+        desired = motion.default_q.copy()
+        desired[ankle_policy_index] = 0.7
+        target = motion._target_from_positions(desired)
+
+        self.assertAlmostEqual(
+            target.q[ankle_model_index], self.joint_map.ranges[ankle_model_index, 1]
+        )
+        self.assertGreater(target.feedforward[ankle_model_index], 0.0)
+        q = data.qpos[self.joint_map.qpos_adr[ankle_model_index]]
+        qd = data.qvel[self.joint_map.qvel_adr[ankle_model_index]]
+        expected = target.torque_scale * (
+            target.kp[ankle_model_index] * (desired[ankle_policy_index] - q)
+            - target.kd[ankle_model_index] * qd
+        )
+        torque = apply_pd(data, self.joint_map, target)
+        self.assertAlmostEqual(torque[ankle_model_index], expected)
 
     def test_target_observation_action_and_step_are_finite(self) -> None:
         import mujoco

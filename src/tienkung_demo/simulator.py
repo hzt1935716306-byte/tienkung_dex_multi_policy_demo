@@ -96,6 +96,7 @@ def blend_targets(first: ControlTarget, second: ControlTarget, alpha: float, lab
         q=(1.0 - alpha) * first.q + alpha * second.q,
         kp=(1.0 - alpha) * first.kp + alpha * second.kp,
         kd=(1.0 - alpha) * first.kd + alpha * second.kd,
+        feedforward=(1.0 - alpha) * first.feedforward + alpha * second.feedforward,
         effort=(1.0 - alpha) * first.effort + alpha * second.effort,
         torque_scale=(1.0 - alpha) * first.torque_scale + alpha * second.torque_scale,
         label=label,
@@ -105,7 +106,9 @@ def blend_targets(first: ControlTarget, second: ControlTarget, alpha: float, lab
 def apply_pd(data, joint_map: JointMap, target: ControlTarget) -> np.ndarray:
     q = data.qpos[joint_map.qpos_adr]
     qd = data.qvel[joint_map.qvel_adr]
-    torque = target.torque_scale * (target.kp * (target.q - q) - target.kd * qd)
+    torque = target.torque_scale * (
+        target.kp * (target.q - q) - target.kd * qd + target.feedforward
+    )
     torque = np.clip(torque, -target.effort, target.effort)
     data.ctrl[:] = 0.0
     data.ctrl[joint_map.actuator_ids] = torque

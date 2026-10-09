@@ -26,6 +26,9 @@ MOTION_LOG_COLUMNS = [
     "tracking_error_max",
     "torque_saturation_fraction",
     "target_clipped_fraction",
+    "feedforward_min",
+    "feedforward_max",
+    "feedforward_nonzero_fraction",
 ]
 
 
@@ -159,7 +162,8 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         control_dt,
     )
     hold_target = walkamp.neutral_target("motion_evt2_hold")
-    motion_config = dict(config["motions"][args.motion])
+    motion_config = dict(config.get("motion_control", {}))
+    motion_config.update(config["motions"][args.motion])
     motion_config["control_mode"] = args.mode
     motion = MotionEvt2Policy(
         model,
@@ -220,6 +224,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
     clipped_target_samples = 0
     target_samples = 0
     clipped_by_joint = np.zeros(len(joint_map.names), dtype=np.int64)
+    maximum_abs_feedforward = 0.0
     left_contact_steps = 0
     right_contact_steps = 0
     any_contact_steps = 0
@@ -237,6 +242,10 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
     print(f"[INFO] motion: {motion.name} ({args.motion}), mode={args.mode}")
     print(f"[INFO] policy: {motion.path} (104 + time_step -> 19)")
     print(f"[INFO] joints: 29 = 19 motion + 10 WALKAMP-neutral hold")
+    print(
+        f"[INFO] control: gains={motion.gain_profile}, "
+        f"preserve_clipped_effort={motion.preserve_clipped_target_effort}"
+    )
     print(f"[INFO] actuator disable bitmask: {int(model.opt.disableactuator)}")
     print(f"[INFO] steps: {max_steps}/{duration_steps}, control_dt={control_dt:.3f}s")
     if logger is not None:
@@ -249,6 +258,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         nonlocal left_contact_steps, right_contact_steps, any_contact_steps
         nonlocal double_contact_steps, left_force_sum, right_force_sum
         nonlocal left_force_max, right_force_max, finite, completed, executed_steps
+        nonlocal maximum_abs_feedforward
 
         target, observation, action = motion.step(step)
         step_saturated = 0
@@ -275,6 +285,9 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         clipped_target_samples += int(np.count_nonzero(motion.last_target_clipped))
         target_samples += len(joint_map.names)
         clipped_by_joint[:] += motion.last_target_clipped
+        maximum_abs_feedforward = max(
+            maximum_abs_feedforward, float(np.max(np.abs(target.feedforward)))
+        )
 
         contacts = contact_monitor.measure(data)
         left_contact = contacts["left_contact_count"] > 0.0
@@ -300,6 +313,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             np.all(np.isfinite(data.qpos))
             and np.all(np.isfinite(data.qvel))
             and np.all(np.isfinite(target.q))
+            and np.all(np.isfinite(target.feedforward))
             and np.all(np.isfinite(torque))
         )
         step_tracking_mean = float(np.mean(tracking_error))
@@ -310,6 +324,11 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             "tracking_error_max": float(np.max(tracking_error)),
             "torque_saturation_fraction": step_saturation_fraction,
             "target_clipped_fraction": float(np.mean(motion.last_target_clipped)),
+            "feedforward_min": float(np.min(target.feedforward)),
+            "feedforward_max": float(np.max(target.feedforward)),
+            "feedforward_nonzero_fraction": float(
+                np.mean(np.abs(target.feedforward) > 1.0e-12)
+            ),
         }
         if logger is not None:
             logger.write(
@@ -396,6 +415,9 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         "tracking_error_max": tracking_error_max,
         "torque_saturation_rate": saturated_samples / max(torque_samples, 1),
         "target_clipped_rate": clipped_target_samples / max(target_samples, 1),
+        "maximum_abs_feedforward": maximum_abs_feedforward,
+        "gain_profile": motion.gain_profile,
+        "preserve_clipped_target_effort": motion.preserve_clipped_target_effort,
         "torque_saturation_by_joint": {
             name: float(saturated_by_joint[index] / max(torque_samples_by_joint[index], 1))
             for index, name in enumerate(joint_map.names)

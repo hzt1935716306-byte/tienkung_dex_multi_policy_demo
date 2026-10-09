@@ -1,6 +1,10 @@
 {
   "model": "../assets/official_evt2/urdf/evt2.xml",
   "walkamp_config": "walkamp_official.json",
+  "motion_control": {
+    "gain_profile": "training_nominal",
+    "preserve_clipped_target_effort": true
+  },
   "motions": {
     "a": {
       "name": "bow",

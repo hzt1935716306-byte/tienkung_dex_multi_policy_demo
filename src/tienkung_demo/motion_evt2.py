@@ -41,6 +41,28 @@ MOTION_OBSERVATION_NAMES = [
     "actions",
 ]
 
+TRAINING_NOMINAL_GAINS = {
+    "hip_pitch_l_joint": (300.0, 15.0),
+    "hip_pitch_r_joint": (300.0, 15.0),
+    "waist_yaw_joint": (400.0, 5.0),
+    "hip_roll_l_joint": (300.0, 15.0),
+    "hip_roll_r_joint": (300.0, 15.0),
+    "waist_roll_joint": (400.0, 15.0),
+    "hip_yaw_l_joint": (150.0, 7.5),
+    "hip_yaw_r_joint": (150.0, 7.5),
+    "waist_pitch_joint": (400.0, 10.0),
+    "knee_pitch_l_joint": (350.0, 15.0),
+    "knee_pitch_r_joint": (350.0, 15.0),
+    "shoulder_pitch_l_joint": (150.0, 5.0),
+    "shoulder_pitch_r_joint": (150.0, 5.0),
+    "ankle_pitch_l_joint": (30.0, 3.75),
+    "ankle_pitch_r_joint": (30.0, 3.75),
+    "ankle_roll_l_joint": (16.8, 2.1),
+    "ankle_roll_r_joint": (16.8, 2.1),
+    "elbow_pitch_l_joint": (150.0, 5.0),
+    "elbow_pitch_r_joint": (150.0, 5.0),
+}
+
 
 def _resolve_path(value: str, config_dir: Path) -> str:
     path = Path(value).expanduser()
@@ -77,6 +99,7 @@ def copy_target(target: ControlTarget, label: str) -> ControlTarget:
         q=target.q.copy(),
         kp=target.kp.copy(),
         kd=target.kd.copy(),
+        feedforward=target.feedforward.copy(),
         effort=target.effort.copy(),
         torque_scale=float(target.torque_scale),
         label=label,
@@ -99,6 +122,19 @@ class MotionEvt2Policy(MotionPolicy):
         hold_target: ControlTarget,
     ) -> None:
         super().__init__(model, data, joint_map, path, config)
+        self.gain_profile = str(config.get("gain_profile", "onnx_metadata"))
+        if self.gain_profile == "training_nominal":
+            self.kp = np.asarray(
+                [TRAINING_NOMINAL_GAINS[name][0] for name in self.joint_names], dtype=np.float64
+            )
+            self.kd = np.asarray(
+                [TRAINING_NOMINAL_GAINS[name][1] for name in self.joint_names], dtype=np.float64
+            )
+        elif self.gain_profile != "onnx_metadata":
+            raise ValueError(f"Unknown motion gain_profile {self.gain_profile!r}")
+        self.preserve_clipped_target_effort = bool(
+            config.get("preserve_clipped_target_effort", False)
+        )
         self.hold_target = copy_target(hold_target, "motion_evt2_hold")
         self.episode_initialized = False
         self.last_unclipped_target = self.hold_target.q.copy()
@@ -215,6 +251,8 @@ class MotionEvt2Policy(MotionPolicy):
         self.last_unclipped_target = target.q.copy()
         target.q = np.clip(target.q, self.joint_map.ranges[:, 0], self.joint_map.ranges[:, 1])
         self.last_target_clipped = target.q != self.last_unclipped_target
+        if self.preserve_clipped_target_effort:
+            target.feedforward += target.kp * (self.last_unclipped_target - target.q)
         target.torque_scale = self.torque_scale
         return target
 

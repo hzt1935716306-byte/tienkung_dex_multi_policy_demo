@@ -251,6 +251,7 @@ class ControlTarget:
     q: np.ndarray
     kp: np.ndarray
     kd: np.ndarray
+    feedforward: np.ndarray
     effort: np.ndarray
     torque_scale: float
     label: str
@@ -304,4 +305,12 @@ def base_target(joint_map: JointMap, label: str) -> ControlTarget:
     kp = values_from_dict(HOLD_KP, joint_map.names)
     kd = values_from_dict(HOLD_KD, joint_map.names)
     effort = np.minimum(joint_map.efforts, 30.0)
-    return ControlTarget(q=q, kp=kp, kd=kd, effort=effort, torque_scale=1.0, label=label)
+    return ControlTarget(
+        q=q,
+        kp=kp,
+        kd=kd,
+        feedforward=np.zeros(len(joint_map.names), dtype=np.float64),
+        effort=effort,
+        torque_scale=1.0,
+        label=label,
+    )

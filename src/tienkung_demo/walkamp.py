@@ -369,7 +369,15 @@ class WalkAmpPolicy:
             effort[self.uncontrolled_indices], self.hold_effort
         )
         q = np.clip(q, self.joint_map.ranges[:, 0], self.joint_map.ranges[:, 1])
-        return ControlTarget(q=q, kp=kp, kd=kd, effort=effort, torque_scale=1.0, label=label)
+        return ControlTarget(
+            q=q,
+            kp=kp,
+            kd=kd,
+            feedforward=np.zeros(len(self.joint_map.names), dtype=np.float64),
+            effort=effort,
+            torque_scale=1.0,
+            label=label,
+        )
 
     def _single_observation(self) -> np.ndarray:
         orientation = quat_normalize(self.data.sensor("orientation").data.copy())
