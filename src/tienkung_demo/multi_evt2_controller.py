@@ -26,6 +26,7 @@ class ControllerState(str, Enum):
     MOTION = "MOTION"
     TRANSITION_OUT = "TRANSITION_OUT"
     RECOVER = "RECOVER"
+    FAILED = "FAILED"
 
 
 class CommandStatus(str, Enum):
@@ -100,10 +101,17 @@ class MultiEvt2Controller:
         self.reentry_step = 0
         self.abort_pending = False
         self.abort_safe_steps = 0
+        self.handoff_stable_steps = 0
+        self.exit_window_opened = False
         self.recovery_failed = False
+        self.terminal_failure_reason = ""
         self.last_rejection_reason = ""
         self.last_start_delta: dict[str, float] = {}
         self.last_readiness: dict[str, Any] = {}
+        self.last_handoff: dict[str, Any] = {}
+        self.last_recovery: dict[str, Any] = {}
+        self.last_contacts: dict[str, float] = {}
+        self.event_history: list[dict[str, Any]] = []
         self.state_history: list[dict[str, Any]] = [
             {"step": 0, "state": self.state.value, "reason": "startup"}
         ]
@@ -162,6 +170,19 @@ class MultiEvt2Controller:
         self.state_step = 0
         self._log_state(reason)
 
+    def _log_event(self, name: str, **details: Any) -> None:
+        payload = {
+            "step": self.global_step,
+            "time": self.global_step * self.control_dt,
+            "event": name,
+            "state": self.state.value,
+            "action_key": self.active_key,
+            "command_id": None if self.active_record is None else self.active_record.command_id,
+            **details,
+        }
+        self.event_history.append(payload)
+        print(f"[EVENT] {json.dumps(payload, ensure_ascii=True)}")
+
     def _new_record(self, command: str, action_key: str | None, source: str) -> CommandRecord:
         record = CommandRecord(
             command_id=self.next_command_id,
@@ -215,6 +236,9 @@ class MultiEvt2Controller:
         self.recovery_failed = False
         self.abort_pending = False
         self.abort_safe_steps = 0
+        self.handoff_stable_steps = 0
+        self.exit_window_opened = False
+        self.terminal_failure_reason = ""
         self._update_record(record, CommandStatus.ACCEPTED)
         self._set_state(ControllerState.READY_CHECK, f"accepted:{action_key}")
         return record
@@ -255,14 +279,21 @@ class MultiEvt2Controller:
     def _state_metrics(self, contacts: dict[str, float]) -> dict[str, float]:
         orientation = self.data.sensor("orientation").data.copy()
         rpy = quaternion_to_rpy(orientation)
+        angular_velocity = self.data.sensor("angular-velocity").data.copy()
         joint_velocity = self.data.qvel[self.joint_map.qvel_adr]
         return {
+            "root_x": float(self.data.qpos[0]),
+            "root_y": float(self.data.qpos[1]),
             "root_z": float(self.data.qpos[2]),
+            "roll": float(rpy[0]),
+            "pitch": float(rpy[1]),
+            "yaw": float(rpy[2]),
             "abs_roll_pitch": float(max(abs(rpy[0]), abs(rpy[1]))),
+            "world_vx": float(self.data.qvel[0]),
+            "world_vy": float(self.data.qvel[1]),
             "xy_speed": float(np.linalg.norm(self.data.qvel[0:2])),
-            "angular_speed": float(
-                np.linalg.norm(self.data.sensor("angular-velocity").data.copy())
-            ),
+            "pitch_angular_velocity": float(angular_velocity[1]),
+            "angular_speed": float(np.linalg.norm(angular_velocity)),
             "maximum_joint_speed": float(np.max(np.abs(joint_velocity))),
             "left_contact_count": float(contacts.get("left_contact_count", 0.0)),
             "right_contact_count": float(contacts.get("right_contact_count", 0.0)),
@@ -274,7 +305,6 @@ class MultiEvt2Controller:
         self,
         contacts: dict[str, float],
         limits: dict[str, Any],
-        require_neutral: bool = False,
     ) -> tuple[bool, list[str], dict[str, float]]:
         metrics = self._state_metrics(contacts)
         reasons: list[str] = []
@@ -305,22 +335,72 @@ class MultiEvt2Controller:
             ),
         )
         reasons.extend(name for passed, name in checks if not passed)
-        if require_neutral:
-            neutral = self.walkamp.neutral_target("recover_check")
-            actual_q = self.data.qpos[self.joint_map.qpos_adr]
-            configured = limits["maximum_neutral_joint_error"]
-            group_limits = (
-                {name: float(configured) for name in self.group_indices}
-                if isinstance(configured, (int, float))
-                else configured
-            )
-            for group, indices in self.group_indices.items():
-                neutral_error = float(np.max(np.abs(actual_q[indices] - neutral.q[indices])))
-                metrics[f"neutral_{group}_error"] = neutral_error
-                if neutral_error > float(group_limits[group]):
-                    reasons.append(f"neutral_{group}_error")
         self.last_readiness = {"metrics": metrics, "reasons": reasons}
         return not reasons, reasons, metrics
+
+    def handoff_feasible(
+        self,
+        contacts: dict[str, float],
+        motion_target: ControlTarget,
+    ) -> tuple[bool, list[str], dict[str, float]]:
+        """Check whether WALKAMP may safely take over the current live state."""
+        limits = self.config["handoff"]
+        metrics = self._state_metrics(contacts)
+        checks = (
+            (metrics["root_z"] >= float(limits["minimum_root_height"]), "root_height"),
+            (abs(metrics["roll"]) <= float(limits["maximum_abs_roll"]), "roll"),
+            (abs(metrics["pitch"]) <= float(limits["maximum_abs_pitch"]), "pitch"),
+            (
+                abs(metrics["pitch_angular_velocity"])
+                <= float(limits["maximum_abs_pitch_angular_velocity"]),
+                "pitch_angular_velocity",
+            ),
+            (metrics["xy_speed"] <= float(limits["maximum_xy_speed"]), "xy_speed"),
+            (
+                metrics["angular_speed"] <= float(limits["maximum_angular_speed"]),
+                "angular_speed",
+            ),
+            (
+                metrics["maximum_joint_speed"] <= float(limits["maximum_joint_speed"]),
+                "joint_speed",
+            ),
+            (metrics["left_contact_count"] > 0.0, "left_contact"),
+            (metrics["right_contact_count"] > 0.0, "right_contact"),
+            (
+                metrics["left_normal_force"] >= float(limits["minimum_normal_force"]),
+                "left_support_force",
+            ),
+            (
+                metrics["right_normal_force"] >= float(limits["minimum_normal_force"]),
+                "right_support_force",
+            ),
+        )
+        reasons = [name for passed, name in checks if not passed]
+        neutral = self.walkamp.neutral_target("handoff_check")
+        actual_q = self.data.qpos[self.joint_map.qpos_adr]
+        for group, indices in self.group_indices.items():
+            posture_error = float(np.max(np.abs(actual_q[indices] - neutral.q[indices])))
+            target_delta = float(np.max(np.abs(motion_target.q[indices] - neutral.q[indices])))
+            metrics[f"{group}_posture_error"] = posture_error
+            metrics[f"{group}_target_delta"] = target_delta
+            if posture_error > float(limits["maximum_posture_error"][group]):
+                reasons.append(f"{group}_posture_error")
+            if target_delta > float(limits["maximum_target_delta"][group]):
+                reasons.append(f"{group}_target_delta")
+        self.last_handoff = {"metrics": metrics, "reasons": reasons}
+        return not reasons, reasons, metrics
+
+    def recovery_complete(
+        self,
+        contacts: dict[str, float],
+    ) -> tuple[bool, list[str], dict[str, float]]:
+        """Check stability after WALKAMP has fully acquired control."""
+        complete, reasons, metrics = self._check_state(
+            contacts,
+            self.config["recover"]["completion_limits"],
+        )
+        self.last_recovery = {"metrics": metrics, "reasons": reasons}
+        return complete, reasons, metrics
 
     def _start_delta(self, reference_target: ControlTarget) -> dict[str, float]:
         if self.active_motion is None:
@@ -383,7 +463,26 @@ class MultiEvt2Controller:
             self._update_record(self.active_record, CommandStatus.FAILED, reason)
         self._begin_transition_out(f"failure:{reason}")
 
-    def _begin_transition_out(self, reason: str) -> None:
+    def _start_walkamp_interpolation(self, reason: str) -> None:
+        phase_time = (
+            self.active_motion.walkamp_reentry_phase_time
+            if self.active_motion is not None
+            else float(self.config.get("walkamp_reentry_phase_time", 0.0))
+        )
+        self.walkamp.begin_from_live_state((0.0, 0.0, 0.0), phase_time=phase_time)
+        self.reentry_started = True
+        self.reentry_step = 0
+        self.recover_stable_steps = 0
+        self._log_event(
+            "walkamp_interpolation_started",
+            reason=reason,
+            frozen_motion_step=self.frozen_motion_step,
+            exit_wait_seconds=self.state_step * self.control_dt,
+            walkamp_phase_time=phase_time,
+            metrics=self._state_metrics(self.last_contacts),
+        )
+
+    def _begin_transition_out(self, reason: str, handoff_prequalified: bool = False) -> None:
         self.walkamp.set_command((0.0, 0.0, 0.0))
         if self.active_motion is not None:
             self.frozen_motion_step = min(
@@ -394,8 +493,48 @@ class MultiEvt2Controller:
         self.reentry_started = False
         self.reentry_step = 0
         self._set_state(ControllerState.TRANSITION_OUT, reason)
+        self._log_event(
+            "transition_out_started",
+            reason=reason,
+            frozen_motion_step=self.frozen_motion_step,
+            handoff_prequalified=handoff_prequalified,
+            metrics=self._state_metrics(self.last_contacts),
+        )
+        if handoff_prequalified:
+            self._start_walkamp_interpolation("prequalified_tail_window")
+
+    def _enter_terminal_failure(
+        self,
+        reason: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.recovery_failed = True
+        self.terminal_failure_reason = reason
+        if self.active_record is not None and self.active_record.status not in (
+            CommandStatus.COMPLETED.value,
+            CommandStatus.REJECTED.value,
+            CommandStatus.FAILED.value,
+        ):
+            self._update_record(self.active_record, CommandStatus.FAILED, reason)
+        if self.abort_record is not None and self.abort_record.status not in (
+            CommandStatus.COMPLETED.value,
+            CommandStatus.FAILED.value,
+        ):
+            self._update_record(self.abort_record, CommandStatus.FAILED, reason)
+        self._log_event(
+            "terminal_failure",
+            reason=reason,
+            metrics=self._state_metrics(self.last_contacts),
+            **(details or {}),
+        )
+        self._set_state(ControllerState.FAILED, reason)
 
     def _finish_recovery(self) -> None:
+        self._log_event(
+            "recovery_completed",
+            recovery_seconds=self.state_step * self.control_dt,
+            metrics=self._state_metrics(self.last_contacts),
+        )
         if self.active_record is not None and self.active_record.status == CommandStatus.EXECUTING.value:
             self._update_record(self.active_record, CommandStatus.COMPLETED)
         if self.abort_record is not None:
@@ -409,18 +548,13 @@ class MultiEvt2Controller:
         self.reentry_step = 0
         self.abort_pending = False
         self.abort_safe_steps = 0
+        self.handoff_stable_steps = 0
+        self.exit_window_opened = False
         self.recover_stable_steps = 0
         self._set_state(ControllerState.WALKAMP_IDLE, "recovery_complete")
 
     def fail(self, reason: str) -> None:
-        if self.active_record is not None and self.active_record.status not in (
-            CommandStatus.COMPLETED.value,
-            CommandStatus.REJECTED.value,
-            CommandStatus.FAILED.value,
-        ):
-            self._update_record(self.active_record, CommandStatus.FAILED, reason)
-        if self.abort_record is not None and self.abort_record.status != CommandStatus.COMPLETED.value:
-            self._update_record(self.abort_record, CommandStatus.FAILED, reason)
+        self._enter_terminal_failure(reason)
 
     def _step_idle(self) -> ControllerOutput:
         target, observation, action = self.walkamp.step()
@@ -492,20 +626,79 @@ class MultiEvt2Controller:
 
     def _step_motion(self, contacts: dict[str, float]) -> ControllerOutput:
         assert self.active_motion is not None
-        target, observation, action = self.active_motion.step(self.motion_step)
+        policy_step = self.motion_step
+        target, observation, action = self.active_motion.step(policy_step)
         self.motion_step += 1
-        if self.abort_pending:
-            settings = self.config["recover"]
-            safe, _, _ = self._check_state(contacts, settings, require_neutral=True)
-            self.abort_safe_steps = self.abort_safe_steps + 1 if safe else 0
-            if self.abort_safe_steps >= self._duration_steps(settings["abort_stable_seconds"]):
-                self._begin_transition_out("safe_abort_window")
+        exit_window = self.active_motion.exit_window
+        window_steps = self._duration_steps(float(exit_window.get("seconds_before_end", 0.0)))
+        in_exit_window = bool(exit_window.get("enabled", False)) and (
+            self.active_motion.duration_steps - self.motion_step <= window_steps
+        )
+        if in_exit_window and not self.exit_window_opened:
+            self.exit_window_opened = True
+            self.handoff_stable_steps = 0
+            self._log_event(
+                "motion_exit_window_opened",
+                motion_step=policy_step,
+                remaining_steps=self.active_motion.duration_steps - self.motion_step,
+                metrics=self._state_metrics(contacts),
+            )
+
+        if in_exit_window:
+            feasible, reasons, metrics = self.handoff_feasible(contacts, target)
+            self.handoff_stable_steps = self.handoff_stable_steps + 1 if feasible else 0
+            required = self._duration_steps(float(exit_window["stable_seconds"]))
+            if self.handoff_stable_steps >= required:
+                self._log_event(
+                    "handoff_condition_met",
+                    source="motion_tail",
+                    motion_step=policy_step,
+                    stable_seconds=self.handoff_stable_steps * self.control_dt,
+                    metrics=metrics,
+                )
+                self._log_event(
+                    "motion_execution_ended",
+                    reason="early_handoff_window",
+                    motion_step=policy_step,
+                    reference_steps_remaining=(
+                        self.active_motion.duration_steps - self.motion_step
+                    ),
+                    metrics=metrics,
+                )
+                self._begin_transition_out("early_handoff_window", handoff_prequalified=True)
+
+        if self.state == ControllerState.MOTION and self.abort_pending:
+            feasible, _, metrics = self.handoff_feasible(contacts, target)
+            self.abort_safe_steps = self.abort_safe_steps + 1 if feasible else 0
+            if self.abort_safe_steps >= self._duration_steps(
+                self.config["handoff"]["abort_stable_seconds"]
+            ):
+                self._log_event(
+                    "handoff_condition_met",
+                    source="safe_abort",
+                    motion_step=policy_step,
+                    stable_seconds=self.abort_safe_steps * self.control_dt,
+                    metrics=metrics,
+                )
+                self._begin_transition_out("safe_abort_window", handoff_prequalified=True)
         if (
             self.state == ControllerState.MOTION
             and self.motion_step >= self.active_motion.duration_steps
         ):
+            self._log_event(
+                "motion_timeline_ended",
+                motion_step=policy_step,
+                metrics=self._state_metrics(contacts),
+            )
             reason = "safe_abort_terminal" if self.abort_pending else "motion_complete"
-            self._begin_transition_out(reason)
+            self._log_event(
+                "motion_execution_ended",
+                reason=reason,
+                motion_step=policy_step,
+                reference_steps_remaining=0,
+                metrics=self._state_metrics(contacts),
+            )
+            self._begin_transition_out(reason, handoff_prequalified=False)
         return ControllerOutput(target, observation, action, 1.0)
 
     def _step_transition_out(self, contacts: dict[str, float]) -> ControllerOutput:
@@ -516,25 +709,31 @@ class MultiEvt2Controller:
         else:
             source = self.last_target
 
-        settings = self.config["recover"]
         if not self.reentry_started:
-            safe, reasons, _ = self._check_state(contacts, settings, require_neutral=True)
-            self.recover_stable_steps = self.recover_stable_steps + 1 if safe else 0
+            feasible, reasons, metrics = self.handoff_feasible(contacts, source)
+            self.handoff_stable_steps = self.handoff_stable_steps + 1 if feasible else 0
             target = source
             progress = 0.0
-            required = self._duration_steps(settings["takeover_stable_seconds"])
-            if self.recover_stable_steps >= required:
-                self.walkamp.begin_from_live_state((0.0, 0.0, 0.0))
-                self.reentry_started = True
-                self.reentry_step = 0
-                print("[INFO] WALKAMP live history initialized at verified takeover state")
-            elif self.state_step >= self._duration_steps(settings["takeover_timeout_seconds"]):
-                if not self.recovery_failed:
-                    reason = "takeover_timeout:" + ",".join(reasons)
-                    self.recovery_failed = True
-                    self._update_record(self.active_record, CommandStatus.FAILED, reason)
-                    self._update_record(self.abort_record, CommandStatus.FAILED, reason)
-                    print(f"[ERROR] {reason}; retaining motion feedback target")
+            settings = self.config["handoff"]
+            required = self._duration_steps(settings["stable_seconds"])
+            if self.handoff_stable_steps >= required:
+                self._log_event(
+                    "handoff_condition_met",
+                    source="terminal_wait",
+                    motion_step=self.frozen_motion_step,
+                    stable_seconds=self.handoff_stable_steps * self.control_dt,
+                    metrics=metrics,
+                )
+                self._start_walkamp_interpolation("terminal_wait_verified")
+            elif self.state_step >= self._duration_steps(settings["terminal_wait_timeout_seconds"]):
+                reason = "handoff_timeout:" + ",".join(reasons)
+                self._enter_terminal_failure(
+                    reason,
+                    {
+                        "exit_wait_seconds": self.state_step * self.control_dt,
+                        "handoff": self.last_handoff,
+                    },
+                )
         else:
             walk_target, _, _ = self.walkamp.step()
             duration = self._duration_steps(self.config["transition_out_seconds"])
@@ -544,6 +743,11 @@ class MultiEvt2Controller:
             if progress >= 1.0:
                 self.recover_stable_steps = 0
                 self._set_state(ControllerState.RECOVER, "walkamp_control_acquired")
+                self._log_event(
+                    "walkamp_control_acquired",
+                    transition_seconds=self.reentry_step * self.control_dt,
+                    metrics=self._state_metrics(contacts),
+                )
                 return ControllerOutput(target, observation, action, progress)
         self.state_step += 1
         return ControllerOutput(target, observation, action, progress)
@@ -551,23 +755,26 @@ class MultiEvt2Controller:
     def _step_recover(self, contacts: dict[str, float]) -> ControllerOutput:
         settings = self.config["recover"]
         target, observation, action = self.walkamp.step()
-        safe, reasons, _ = self._check_state(contacts, settings, require_neutral=False)
+        safe, reasons, metrics = self.recovery_complete(contacts)
         self.recover_stable_steps = self.recover_stable_steps + 1 if safe else 0
         required = self._duration_steps(settings["stable_seconds"])
         if self.recover_stable_steps >= required:
             self._finish_recovery()
             return ControllerOutput(target, observation, action, 0.0)
         elif self.state_step >= self._duration_steps(settings["timeout_seconds"]):
-            if not self.recovery_failed:
-                reason = "recover_timeout:" + ",".join(reasons)
-                self.recovery_failed = True
-                self._update_record(self.active_record, CommandStatus.FAILED, reason)
-                self._update_record(self.abort_record, CommandStatus.FAILED, reason)
-                print(f"[ERROR] {reason}; retaining WALKAMP zero-command feedback")
+            reason = "recover_timeout:" + ",".join(reasons)
+            self._enter_terminal_failure(
+                reason,
+                {
+                    "recovery_seconds": self.state_step * self.control_dt,
+                    "recovery": {"metrics": metrics, "reasons": reasons},
+                },
+            )
         self.state_step += 1
         return ControllerOutput(target, observation, action, 0.0)
 
     def step(self, contacts: dict[str, float]) -> ControllerOutput:
+        self.last_contacts = dict(contacts)
         emergency = self._emergency_reasons()
         if emergency and self.state not in (
             ControllerState.WALKAMP_IDLE,
@@ -590,6 +797,8 @@ class MultiEvt2Controller:
             output = self._step_transition_out(contacts)
         elif self.state == ControllerState.RECOVER:
             output = self._step_recover(contacts)
+        elif self.state == ControllerState.FAILED:
+            output = ControllerOutput(self.last_target, None, None, 0.0)
         else:
             raise RuntimeError(f"Unknown controller state {self.state!r}")
 
@@ -606,6 +815,10 @@ class MultiEvt2Controller:
             "last_rejection_reason": self.last_rejection_reason,
             "last_start_delta": self.last_start_delta,
             "last_readiness": self.last_readiness,
+            "last_handoff": self.last_handoff,
+            "last_recovery": self.last_recovery,
+            "terminal_failure_reason": self.terminal_failure_reason,
             "state_history": self.state_history,
+            "events": self.event_history,
             "commands": [asdict(record) for record in self.command_records],
         }

@@ -131,6 +131,75 @@ class MultiEvt2Tests(unittest.TestCase):
             elif not any(token in name for token in ("hip_", "knee_", "ankle_")):
                 expected = 0.03
             self.assertAlmostEqual(limited.q[index] - initial.q[index], expected)
+        self.assertGreater(limiter.last_requested_maximum_delta, 9.0)
+        self.assertAlmostEqual(limiter.last_applied_maximum_delta, 0.03)
+
+    def test_bow_only_has_an_early_exit_window(self) -> None:
+        self.assertTrue(self.config["motions"]["a"]["exit_window"]["enabled"])
+        self.assertAlmostEqual(
+            self.config["motions"]["a"]["exit_window"]["seconds_before_end"],
+            0.8,
+        )
+        self.assertAlmostEqual(
+            self.config["motions"]["a"]["walkamp_reentry_phase_time"],
+            0.2125,
+        )
+        self.assertFalse(self.config["motions"]["b"]["exit_window"]["enabled"])
+        self.assertEqual(
+            self.config["motions"]["b"]["walkamp_reentry_phase_time"],
+            0.0,
+        )
+
+    def test_handoff_and_recovery_have_distinct_limits(self) -> None:
+        import mujoco
+
+        data, walkamp, _, controller = self.build_stack()
+        contacts = {
+            "left_contact_count": 1.0,
+            "right_contact_count": 1.0,
+            "left_normal_force": 100.0,
+            "right_normal_force": 100.0,
+        }
+        neutral = walkamp.neutral_target("handoff_test")
+        handoff, handoff_reasons, _ = controller.handoff_feasible(contacts, neutral)
+        recovered, recovery_reasons, _ = controller.recovery_complete(contacts)
+        self.assertTrue(handoff, handoff_reasons)
+        self.assertTrue(recovered, recovery_reasons)
+
+        pitch = 0.15
+        data.qpos[3:7] = np.array(
+            [np.cos(pitch / 2.0), 0.0, np.sin(pitch / 2.0), 0.0]
+        )
+        mujoco.mj_forward(self.model, data)
+        handoff, handoff_reasons, _ = controller.handoff_feasible(contacts, neutral)
+        recovered, recovery_reasons, _ = controller.recovery_complete(contacts)
+        self.assertFalse(handoff)
+        self.assertIn("pitch", handoff_reasons)
+        self.assertTrue(recovered, recovery_reasons)
+
+    def test_terminal_wait_is_bounded_and_enters_failed_state(self) -> None:
+        _, _, _, controller = self.build_stack()
+        record = controller.request_command("bow", "test")
+        controller._begin_transition_out("test_terminal_wait")
+        no_support = {
+            "left_contact_count": 0.0,
+            "right_contact_count": 0.0,
+            "left_normal_force": 0.0,
+            "right_normal_force": 0.0,
+        }
+        timeout_steps = controller._duration_steps(
+            self.config["controller"]["handoff"]["terminal_wait_timeout_seconds"]
+        )
+        for _ in range(timeout_steps + 2):
+            controller.step(no_support)
+            if controller.state == ControllerState.FAILED:
+                break
+        self.assertEqual(controller.state, ControllerState.FAILED)
+        self.assertEqual(record.status, CommandStatus.FAILED.value)
+        self.assertIn("handoff_timeout", controller.terminal_failure_reason)
+        self.assertTrue(
+            any(event["event"] == "terminal_failure" for event in controller.event_history)
+        )
 
     def test_live_initialization_never_changes_simulation_state(self) -> None:
         data, walkamp, motions, _ = self.build_stack()

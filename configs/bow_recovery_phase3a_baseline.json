@@ -1,4 +1,5 @@
 {
+  "baseline_commit": "6f98d7e",
   "model": "../assets/official_evt2/urdf/evt2.xml",
   "walkamp_config": "walkamp_official.json",
   "command_file": "/tmp/tienkung_dex_commands.jsonl",
@@ -15,13 +16,7 @@
       "duration_steps": 556,
       "start_step": 0,
       "torque_scale": 1.0,
-      "effort_scale": 1.0,
-      "walkamp_reentry_phase_time": 0.2125,
-      "exit_window": {
-        "enabled": true,
-        "seconds_before_end": 0.8,
-        "stable_seconds": 0.15
-      }
+      "effort_scale": 1.0
     },
     "b": {
       "name": "right_hand_open",
@@ -30,21 +25,13 @@
       "duration_steps": 685,
       "start_step": 0,
       "torque_scale": 1.0,
-      "effort_scale": 1.0,
-      "walkamp_reentry_phase_time": 0.0,
-      "exit_window": {
-        "enabled": false,
-        "seconds_before_end": 0.0,
-        "stable_seconds": 0.15
-      }
+      "effort_scale": 1.0
     }
   },
   "controller": {
-    "transition_duration_candidates": [0.2, 0.3, 0.4, 0.6],
+    "transition_duration_candidates": [0.2, 0.4, 0.6, 0.8],
     "transition_in_seconds": 0.4,
     "transition_out_seconds": 0.6,
-    "walkamp_reentry_phase_time": 0.0,
-    "walkamp_reentry_phase_candidates": [0.0, 0.2125, 0.425, 0.6375],
     "ready_check": {
       "stable_seconds": 0.2,
       "timeout_seconds": 5.0,
@@ -77,39 +64,22 @@
         "minimum_normal_force": 2.0
       }
     },
-    "handoff": {
-      "abort_stable_seconds": 0.15,
-      "stable_seconds": 0.15,
-      "terminal_wait_timeout_seconds": 0.8,
-      "minimum_root_height": 0.85,
-      "maximum_abs_roll": 0.2,
-      "maximum_abs_pitch": 0.1,
-      "maximum_abs_pitch_angular_velocity": 0.15,
-      "maximum_xy_speed": 0.15,
-      "maximum_angular_speed": 0.25,
-      "maximum_joint_speed": 0.8,
-      "minimum_normal_force": 20.0,
-      "maximum_posture_error": {
-        "legs": 0.35,
-        "waist": 0.3,
-        "arms": 1.5
-      },
-      "maximum_target_delta": {
-        "legs": 0.75,
-        "waist": 0.35,
-        "arms": 0.5
-      }
-    },
     "recover": {
+      "abort_stable_seconds": 0.15,
+      "takeover_stable_seconds": 0.2,
+      "takeover_timeout_seconds": 4.0,
       "stable_seconds": 0.3,
       "timeout_seconds": 8.0,
-      "completion_limits": {
-        "minimum_root_height": 0.85,
-        "maximum_abs_roll_pitch": 0.2,
-        "maximum_xy_speed": 0.15,
-        "maximum_angular_speed": 0.4,
-        "maximum_joint_speed": 1.0,
-        "minimum_normal_force": 5.0
+      "minimum_root_height": 0.65,
+      "maximum_abs_roll_pitch": 0.35,
+      "maximum_xy_speed": 0.3,
+      "maximum_angular_speed": 0.8,
+      "maximum_joint_speed": 2.0,
+      "minimum_normal_force": 2.0,
+      "maximum_neutral_joint_error": {
+        "legs": 0.4,
+        "waist": 0.4,
+        "arms": 2.5
       }
     },
     "emergency": {
@@ -146,29 +116,6 @@
     "yaw_step": 0.1
   },
   "scenarios": {
-    "idle": {
-      "duration_seconds": 6.0,
-      "events": []
-    },
-    "bow": {
-      "duration_seconds": 12.0,
-      "events": [
-        {"time": 2.0, "command": "a"}
-      ]
-    },
-    "wave": {
-      "duration_seconds": 14.0,
-      "events": [
-        {"time": 2.0, "command": "b"}
-      ]
-    },
-    "abort": {
-      "duration_seconds": 10.0,
-      "events": [
-        {"time": 2.0, "command": "b"},
-        {"time": 4.5, "command": "r"}
-      ]
-    },
     "bow_repeat20": {
       "duration_seconds": 204.0,
       "events": [
@@ -192,41 +139,6 @@
         {"time": 172.0, "command": "a"},
         {"time": 182.0, "command": "a"},
         {"time": 192.0, "command": "a"}
-      ]
-    },
-    "bow_initial_forward": {
-      "duration_seconds": 13.0,
-      "initial_state": {
-        "pitch": 0.01,
-        "world_velocity": [0.01, 0.0],
-        "pitch_angular_velocity": 0.01
-      },
-      "events": [
-        {"time": 1.0, "command": "a"}
-      ]
-    },
-    "bow_initial_backward": {
-      "duration_seconds": 13.0,
-      "initial_state": {
-        "pitch": -0.01,
-        "world_velocity": [-0.01, 0.0],
-        "pitch_angular_velocity": -0.01
-      },
-      "events": [
-        {"time": 1.0, "command": "a"}
-      ]
-    },
-    "bow_tail_perturbed": {
-      "duration_seconds": 13.0,
-      "events": [
-        {"time": 2.0, "command": "a"}
-      ],
-      "perturbations": [
-        {
-          "time": 8.75,
-          "delta_world_velocity": [0.04, 0.0],
-          "delta_pitch_angular_velocity": 0.04
-        }
       ]
     }
   },

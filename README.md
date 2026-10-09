@@ -90,6 +90,18 @@ python scripts/run_multi_evt2_headless_suite.py --config configs/multi_evt2.json
 
 状态检查、live-state 初始化、五次多项式交接、限速和测试结果见 [Phase 3A 文档](docs/MULTI_POLICY_PHASE3A.md)。原有 `run_walkamp.py`、`run_motion_evt2.py`、`run_sim.py` 和 `configs/demo.json` 均保留。
 
+### Phase 3A.1 鞠躬恢复优化
+
+鞠躬现在会在动作末尾 `0.8 s` 内连续检查实际姿态、速度、双脚支撑和关节状态，在安全窗口提前交给 WALKAMP；末帧等待有明确超时，不会无限冻结。默认退出插值为 `0.6 s`，鞠躬专用 WALKAMP 重入相位为 `0.2125 s`；摆手仍保留原来的 `0.0 s`。
+
+专项无头测试（包含插值/相位对照、轻微扰动和同一物理状态连续 20 次鞠躬）：
+
+```bash
+python scripts/run_bow_recovery_suite.py --config configs/multi_evt2.json
+```
+
+修复前基线可独立复现，详细诊断、结果和限制见 [Phase 3A.1 文档](docs/BOW_RECOVERY_PHASE3A1.md)。
+
 ## 目录结构
 
 ```text

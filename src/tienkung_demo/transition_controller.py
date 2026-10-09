@@ -82,11 +82,15 @@ class TargetRateLimiter:
             raise ValueError("All target rate limits must be positive")
         self.previous_q: np.ndarray | None = None
         self.last_maximum_rate = 0.0
+        self.last_requested_maximum_delta = 0.0
+        self.last_applied_maximum_delta = 0.0
 
     def reset(self, positions: np.ndarray) -> None:
         positions = np.asarray(positions, dtype=np.float64)
         self.previous_q = positions.copy()
         self.last_maximum_rate = 0.0
+        self.last_requested_maximum_delta = 0.0
+        self.last_applied_maximum_delta = 0.0
 
     def apply(self, target: ControlTarget) -> ControlTarget:
         limited = copy_target(target)
@@ -97,6 +101,8 @@ class TargetRateLimiter:
         maximum_delta = self.maximum_rates * self.control_dt
         applied_delta = np.clip(requested_delta, -maximum_delta, maximum_delta)
         limited.q = self.previous_q + applied_delta
+        self.last_requested_maximum_delta = float(np.max(np.abs(requested_delta)))
+        self.last_applied_maximum_delta = float(np.max(np.abs(applied_delta)))
         self.last_maximum_rate = float(np.max(np.abs(applied_delta) / self.control_dt))
         self.previous_q = limited.q.copy()
         return limited

@@ -54,7 +54,7 @@ WALKAMP_IDLE
 
 The motion time index remains at frame zero during pre-alignment and transition-in. It starts advancing only after `MOTION` acquires control.
 
-At normal completion, motion feedback remains active at the terminal frame until the measured robot state is suitable for takeover. WALKAMP then rebuilds its 840-value history, previous action, and gait phase from the live state. Recovery is declared complete only after another measured stable interval.
+At normal completion, motion feedback remains active until the measured robot state is suitable for takeover. Phase 3A.1 adds a verified early tail window for bow and a bounded terminal wait; wave retains the terminal-frame path. WALKAMP then rebuilds its 840-value history, previous action, and gait phase from the live state. Recovery is declared complete only after another measured stable interval. See [Phase 3A.1 bow recovery](BOW_RECOVERY_PHASE3A1.md) for the newer exit behavior and tests.
 
 An `r` command waits for a verified support and posture window. If no safe early window is available, the motion controller remains active until a safe terminal region; it is never replaced by a zero-torque or direct state reset.
 

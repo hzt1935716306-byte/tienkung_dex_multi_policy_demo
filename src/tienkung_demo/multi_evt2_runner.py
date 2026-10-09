@@ -27,6 +27,8 @@ EXTRA_LOG_COLUMNS = [
     "left_normal_force",
     "right_normal_force",
     "maximum_target_rate",
+    "requested_target_delta",
+    "applied_target_delta",
     "maximum_torque_rate",
     "torque_saturation_fraction",
     "torque_slew_limited_fraction",
@@ -72,6 +74,11 @@ class ScheduledCommands:
             for item in config.get("events", [])
         ]
         self.next_event = 0
+        self.perturbations = [
+            (int(round(float(item["time"]) / control_dt)), item)
+            for item in config.get("perturbations", [])
+        ]
+        self.next_perturbation = 0
 
     def commands(self, step: int) -> list[str]:
         values: list[str] = []
@@ -79,6 +86,23 @@ class ScheduledCommands:
             values.append(self.events[self.next_event][1])
             self.next_event += 1
         return values
+
+    def apply_perturbations(self, step: int, data) -> None:
+        while (
+            self.next_perturbation < len(self.perturbations)
+            and step >= self.perturbations[self.next_perturbation][0]
+        ):
+            _, values = self.perturbations[self.next_perturbation]
+            velocity = np.asarray(values.get("delta_world_velocity", [0.0, 0.0]), dtype=np.float64)
+            if velocity.shape != (2,):
+                raise ValueError("delta_world_velocity must contain [vx, vy]")
+            data.qvel[0:2] += velocity
+            data.qvel[4] += float(values.get("delta_pitch_angular_velocity", 0.0))
+            print(
+                f"[PERTURB] step={step} dv=({velocity[0]:.3f},{velocity[1]:.3f}) "
+                f"dwy={float(values.get('delta_pitch_angular_velocity', 0.0)):.3f}"
+            )
+            self.next_perturbation += 1
 
 
 class KeyboardControl:
@@ -118,13 +142,14 @@ class KeyboardControl:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Command-driven WALKAMP + BeyondMimic EVT2 demo")
     parser.add_argument("--config", default="configs/multi_evt2.json")
-    parser.add_argument("--scenario", default="manual", help="manual, idle, bow, wave, or abort")
+    parser.add_argument("--scenario", default="manual", help="manual or a scenario from the JSON config")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--no-realtime", action="store_true")
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--command-file", default="")
     parser.add_argument("--transition-in", type=float, default=None)
     parser.add_argument("--transition-out", type=float, default=None)
+    parser.add_argument("--reentry-phase", type=float, default=None)
     parser.add_argument("--log", default="")
     parser.add_argument("--summary", default="")
     parser.add_argument("--no-log", action="store_true")
@@ -145,6 +170,8 @@ def validate_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[st
         <= float(limits["maximum_torque_rate"]),
         "torque_saturation": summary["torque_saturation_rate"]
         <= float(limits["maximum_torque_saturation_rate"]),
+        "controller_not_failed": summary["controller"]["state"]
+        != ControllerState.FAILED.value,
     }
     scenario = summary["scenario"]
     commands = summary["controller"]["commands"]
@@ -153,12 +180,25 @@ def validate_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[st
             event["state"] == ControllerState.WALKAMP_IDLE.value
             for event in summary["controller"]["state_history"]
         )
-    elif scenario in ("bow", "wave"):
+    elif scenario == "wave" or scenario.startswith("bow"):
+        action_key = "b" if scenario == "wave" else "a"
+        expected = sum(
+            str(event.get("command", "")).lower() in (
+                action_key,
+                "wave" if action_key == "b" else "bow",
+            )
+            for event in config["scenarios"][scenario].get("events", [])
+        )
         checks["action_completed"] = any(
             record["status"] == CommandStatus.COMPLETED.value
-            and record["action_key"] == ("a" if scenario == "bow" else "b")
+            and record["action_key"] == action_key
             for record in commands
         )
+        checks["all_actions_completed"] = sum(
+            record["status"] == CommandStatus.COMPLETED.value
+            and record["action_key"] == action_key
+            for record in commands
+        ) == expected
         checks["returned_to_walkamp"] = (
             summary["controller"]["state"] == ControllerState.WALKAMP_IDLE.value
         )
@@ -185,6 +225,10 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         config["controller"]["transition_in_seconds"] = args.transition_in
     if args.transition_out is not None:
         config["controller"]["transition_out_seconds"] = args.transition_out
+    if args.reentry_phase is not None:
+        config["controller"]["walkamp_reentry_phase_time"] = args.reentry_phase
+        for motion in config["motions"].values():
+            motion["walkamp_reentry_phase_time"] = args.reentry_phase
 
     import mujoco
 
@@ -220,6 +264,27 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         float(sim["initial_height"]),
         float(sim["ground_clearance"]),
     )
+    scenario_values = (
+        {} if args.scenario == "manual" else config["scenarios"][args.scenario]
+    )
+    initial_state = scenario_values.get("initial_state", {})
+    initial_pitch = float(initial_state.get("pitch", 0.0))
+    if initial_pitch:
+        data.qpos[3:7] = np.array(
+            [math.cos(initial_pitch / 2.0), 0.0, math.sin(initial_pitch / 2.0), 0.0],
+            dtype=np.float64,
+        )
+    initial_velocity = np.asarray(
+        initial_state.get("world_velocity", [0.0, 0.0]),
+        dtype=np.float64,
+    )
+    if initial_velocity.shape != (2,):
+        raise ValueError("initial_state.world_velocity must contain [vx, vy]")
+    data.qvel[0:2] = initial_velocity
+    data.qvel[4] = float(initial_state.get("pitch_angular_velocity", 0.0))
+    if initial_state:
+        mujoco.mj_forward(model, data)
+        print(f"[INFO] applied initial recovery test state: {json.dumps(initial_state)}")
     hold_target = walkamp.neutral_target("motion_uncontrolled_hold")
     motions: dict[str, MotionEvt2Policy] = {}
     for key, motion_values in config["motions"].items():
@@ -286,9 +351,19 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
     minimum_root_z = float(data.qpos[2])
     maximum_abs_roll_pitch = 0.0
     maximum_target_rate = 0.0
+    maximum_requested_target_delta = 0.0
+    maximum_applied_target_delta = 0.0
     maximum_torque_rate = 0.0
+    maximum_abs_torque = 0.0
     saturation_sum = 0.0
     torque_samples = 0
+    transition_out_maximum_target_rate = 0.0
+    transition_out_maximum_requested_target_delta = 0.0
+    transition_out_maximum_applied_target_delta = 0.0
+    transition_out_maximum_torque_rate = 0.0
+    transition_out_maximum_abs_torque = 0.0
+    transition_out_saturation_sum = 0.0
+    transition_out_samples = 0
     finite = True
     executed_steps = 0
 
@@ -301,15 +376,24 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
 
     def step_once(step: int) -> bool:
         nonlocal minimum_root_z, maximum_abs_roll_pitch, maximum_target_rate
-        nonlocal maximum_torque_rate, saturation_sum, torque_samples, finite, executed_steps
+        nonlocal maximum_requested_target_delta, maximum_applied_target_delta
+        nonlocal maximum_torque_rate, maximum_abs_torque
+        nonlocal saturation_sum, torque_samples, finite, executed_steps
+        nonlocal transition_out_maximum_target_rate
+        nonlocal transition_out_maximum_requested_target_delta
+        nonlocal transition_out_maximum_applied_target_delta
+        nonlocal transition_out_maximum_torque_rate, transition_out_maximum_abs_torque
+        nonlocal transition_out_saturation_sum, transition_out_samples
 
         if schedule is not None:
             for command in schedule.commands(step):
                 controller.request_command(command, f"scenario:{args.scenario}")
+            schedule.apply_perturbations(step, data)
         for command, source in command_reader.read():
             controller.request_command(command, source)
 
         contacts = contact_monitor.measure(data)
+        state_before_control = controller.state
         output = controller.step(contacts)
         torque_result = None
         for _ in range(substeps):
@@ -329,9 +413,41 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             maximum_target_rate,
             controller.target_limiter.last_maximum_rate,
         )
+        maximum_requested_target_delta = max(
+            maximum_requested_target_delta,
+            controller.target_limiter.last_requested_maximum_delta,
+        )
+        maximum_applied_target_delta = max(
+            maximum_applied_target_delta,
+            controller.target_limiter.last_applied_maximum_delta,
+        )
         maximum_torque_rate = max(maximum_torque_rate, torque_result.maximum_rate)
+        maximum_abs_torque = max(maximum_abs_torque, float(np.max(np.abs(torque_result.torque))))
         saturation_sum += torque_result.saturation_fraction
         torque_samples += 1
+        if state_before_control == ControllerState.TRANSITION_OUT:
+            transition_out_maximum_target_rate = max(
+                transition_out_maximum_target_rate,
+                controller.target_limiter.last_maximum_rate,
+            )
+            transition_out_maximum_requested_target_delta = max(
+                transition_out_maximum_requested_target_delta,
+                controller.target_limiter.last_requested_maximum_delta,
+            )
+            transition_out_maximum_applied_target_delta = max(
+                transition_out_maximum_applied_target_delta,
+                controller.target_limiter.last_applied_maximum_delta,
+            )
+            transition_out_maximum_torque_rate = max(
+                transition_out_maximum_torque_rate,
+                torque_result.maximum_rate,
+            )
+            transition_out_maximum_abs_torque = max(
+                transition_out_maximum_abs_torque,
+                float(np.max(np.abs(torque_result.torque))),
+            )
+            transition_out_saturation_sum += torque_result.saturation_fraction
+            transition_out_samples += 1
         finite = bool(
             np.all(np.isfinite(data.qpos))
             and np.all(np.isfinite(data.qvel))
@@ -354,6 +470,10 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
                     "transition_alpha": output.transition_alpha,
                     **contacts,
                     "maximum_target_rate": controller.target_limiter.last_maximum_rate,
+                    "requested_target_delta": (
+                        controller.target_limiter.last_requested_maximum_delta
+                    ),
+                    "applied_target_delta": controller.target_limiter.last_applied_maximum_delta,
                     "maximum_torque_rate": torque_result.maximum_rate,
                     "torque_saturation_fraction": torque_result.saturation_fraction,
                     "torque_slew_limited_fraction": torque_result.slew_limited_fraction,
@@ -374,6 +494,9 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         if float(data.qpos[2]) < fall_threshold:
             controller.fail("fall_threshold")
             print(f"[ERROR] robot fell: root_z={data.qpos[2]:.3f} < {fall_threshold:.3f}")
+            return False
+        if controller.state == ControllerState.FAILED:
+            print(f"[ERROR] controller entered FAILED: {controller.terminal_failure_reason}")
             return False
         if keyboard.quit_requested:
             return False
@@ -413,9 +536,27 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         "fall_threshold": fall_threshold,
         "maximum_abs_roll_pitch": maximum_abs_roll_pitch,
         "maximum_target_rate": maximum_target_rate,
+        "maximum_requested_target_delta": maximum_requested_target_delta,
+        "maximum_applied_target_delta": maximum_applied_target_delta,
         "maximum_torque_rate": maximum_torque_rate,
+        "maximum_abs_torque": maximum_abs_torque,
         "torque_saturation_rate": saturation_sum / max(torque_samples, 1),
+        "transition_out_metrics": {
+            "samples": transition_out_samples,
+            "maximum_target_rate": transition_out_maximum_target_rate,
+            "maximum_requested_target_delta": (
+                transition_out_maximum_requested_target_delta
+            ),
+            "maximum_applied_target_delta": transition_out_maximum_applied_target_delta,
+            "maximum_torque_rate": transition_out_maximum_torque_rate,
+            "maximum_abs_torque": transition_out_maximum_abs_torque,
+            "torque_saturation_rate": (
+                transition_out_saturation_sum / max(transition_out_samples, 1)
+            ),
+        },
         "final_command": walkamp.command.tolist(),
+        "final_root_x": float(data.qpos[0]),
+        "final_root_y": float(data.qpos[1]),
         "controller": controller.summary(),
         "model": config["model"],
         "walkamp_policy": walkamp_config["policy"],

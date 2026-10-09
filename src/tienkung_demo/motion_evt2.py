@@ -149,6 +149,10 @@ class MotionEvt2Policy(MotionPolicy):
         self.initialization_mode = "uninitialized"
         self.live_start_count = 0
         self.previous_action_clip = float(config.get("previous_action_clip", 100.0))
+        self.walkamp_reentry_phase_time = float(
+            config.get("walkamp_reentry_phase_time", 0.0)
+        )
+        self.exit_window = dict(config.get("exit_window", {}))
         self._validate_contract()
 
         controlled = set(self.joint_names)
