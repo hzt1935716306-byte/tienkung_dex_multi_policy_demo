@@ -70,14 +70,18 @@ Results recorded on 2026-10-09 using the packaged official EVT2 model and the re
 
 | Motion and mode | Result | Steps | Min root z | Max abs roll/pitch | Mean tracking error | Torque saturation |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Bow reference | Diagnostic failed: fell | 136/556 | 0.339 m | 1.352 rad | 0.045 rad | 0.068% |
-| Hand reference | Diagnostic failed: fell | 156/685 | 0.324 m | 1.356 rad | 0.034 rad | 0.000% |
-| Bow policy | Pass | 556/556 | 0.927 m | 0.720 rad | 0.090 rad | 0.000% |
-| Hand policy | Pass | 685/685 | 0.977 m | 0.105 rad | 0.068 rad | 0.003% |
+| Bow reference | Diagnostic failed: fell | 132/556 | 0.345 m | 1.346 rad | 0.045 rad | 0.063% |
+| Hand reference | Diagnostic failed: fell | 151/685 | 0.342 m | 1.342 rad | 0.035 rad | 0.000% |
+| Bow policy | Pass | 556/556 | 0.930 m | 0.735 rad | 0.086 rad | 0.000% |
+| Hand policy | Pass | 685/685 | 0.992 m | 0.075 rad | 0.033 rad | 0.003% |
 
 The reference failures are genuine: their first-frame poses and open-loop joint trajectories are not dynamically balanced under official EVT2 inertias and contacts. They fell despite low tracking error and no meaningful torque saturation. Holding the first reference frame before playback was also tested and did not resolve the fall. The feedback policy results are therefore reported separately and are the only policy-success results.
 
-The policy runs used no gravity changes, leg locking, periodic state reset, or gain inflation. Bow target clipping occurred for 3.45% of all joint-step targets and hand target clipping for 2.51%. Only the left/right ankle-pitch targets were clipped to official XML limits; the exact per-joint rates are retained in each JSON summary.
+The policy runs used no gravity changes, leg locking, periodic state reset, or gain inflation. Bow target clipping occurred for 3.32% of all joint-step targets and hand target clipping for 0.09%. Only the left/right ankle-pitch targets were clipped to official XML limits; the exact per-joint rates are retained in each JSON summary.
+
+The initial ground-clearance calculation projects each oriented collision shape onto the world vertical axis. The earlier orientation-independent bounding-radius calculation overestimated the vertical size of the sideways foot cylinders by about 0.104 m. Correcting it and using a 2 mm motion-episode clearance moved first foot contact from step 13-14 to step 1-2. Bow peak normal force fell from about 4420 N to 1395 N; hand peak normal force fell from about 2817 N to 1513 N. This removes most of the artificial startup rocking.
+
+Some bow movement remains intrinsic to this compatibility baseline. Its reference pelvis trajectory contains about 0.76 rad of pitch and 0.26 rad of yaw variation, and the policy was trained on the 19-joint Liondance model rather than the dynamically different official EVT2 model. Removing that residual motion safely requires reference cleanup and policy fine-tuning or retraining; root locking, gravity changes and arbitrary gain increases are deliberately not used here.
 
 ## Tests and WALKAMP regression
 

@@ -25,7 +25,7 @@
     "sim_dt": 0.001,
     "control_dt": 0.01,
     "solver_iterations": 100,
-    "ground_clearance": 0.015,
+    "ground_clearance": 0.002,
     "fall_threshold": 0.35,
     "debug_interval": 25,
     "realtime": true

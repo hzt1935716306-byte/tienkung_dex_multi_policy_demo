@@ -119,6 +119,16 @@ class MotionEvt2Tests(unittest.TestCase):
                 self.assertTrue(np.all(np.isfinite(data.qpos)))
                 self.assertTrue(np.all(np.isfinite(data.qvel)))
 
+    def test_reference_clearance_respects_rotated_foot_cylinders(self) -> None:
+        data, motion, _ = self.build_policy()
+        motion.reset_episode_to_reference()
+        initial_root_z = float(data.qpos[2])
+        minimum = ensure_episode_ground_clearance(self.model, data, 0.015)
+        lift = float(data.qpos[2]) - initial_root_z
+        self.assertAlmostEqual(minimum, 0.015, places=6)
+        self.assertGreater(lift, 0.05)
+        self.assertLess(lift, 0.08)
+
     def test_reference_reset_is_episode_start_only(self) -> None:
         _, motion, _ = self.build_policy()
         motion.reset_episode_to_reference()

@@ -20,6 +20,8 @@ def robot_min_geom_z(model, data) -> float:
         if model.geom_bodyid[geom_id] == 0:
             continue
         geom_type = model.geom_type[geom_id]
+        # geom_rbound is orientation independent and greatly overestimates the
+        # vertical extent of the EVT2 foot cylinders after they rotate sideways.
         if geom_type == mujoco.mjtGeom.mjGEOM_MESH:
             mesh_id = model.geom_dataid[geom_id]
             start = model.mesh_vertadr[mesh_id]
@@ -28,10 +30,28 @@ def robot_min_geom_z(model, data) -> float:
             matrix = data.geom_xmat[geom_id].reshape(3, 3)
             minimum = float((data.geom_xpos[geom_id] + vertices @ matrix.T)[:, 2].min())
         elif geom_type == mujoco.mjtGeom.mjGEOM_BOX:
-            sx, sy, sz = model.geom_size[geom_id, :3]
-            vertices = np.array([[x, y, z] for x in (-sx, sx) for y in (-sy, sy) for z in (-sz, sz)])
             matrix = data.geom_xmat[geom_id].reshape(3, 3)
-            minimum = float((data.geom_xpos[geom_id] + vertices @ matrix.T)[:, 2].min())
+            extent = float(np.sum(np.abs(matrix[2]) * model.geom_size[geom_id, :3]))
+            minimum = float(data.geom_xpos[geom_id, 2] - extent)
+        elif geom_type == mujoco.mjtGeom.mjGEOM_SPHERE:
+            minimum = float(data.geom_xpos[geom_id, 2] - model.geom_size[geom_id, 0])
+        elif geom_type == mujoco.mjtGeom.mjGEOM_CAPSULE:
+            matrix = data.geom_xmat[geom_id].reshape(3, 3)
+            radius, half_length = model.geom_size[geom_id, :2]
+            extent = float(radius + abs(matrix[2, 2]) * half_length)
+            minimum = float(data.geom_xpos[geom_id, 2] - extent)
+        elif geom_type == mujoco.mjtGeom.mjGEOM_CYLINDER:
+            matrix = data.geom_xmat[geom_id].reshape(3, 3)
+            radius, half_length = model.geom_size[geom_id, :2]
+            extent = float(
+                abs(matrix[2, 2]) * half_length
+                + radius * np.linalg.norm(matrix[2, :2])
+            )
+            minimum = float(data.geom_xpos[geom_id, 2] - extent)
+        elif geom_type == mujoco.mjtGeom.mjGEOM_ELLIPSOID:
+            matrix = data.geom_xmat[geom_id].reshape(3, 3)
+            extent = float(np.linalg.norm(matrix[2] * model.geom_size[geom_id, :3]))
+            minimum = float(data.geom_xpos[geom_id, 2] - extent)
         else:
             minimum = float(data.geom_xpos[geom_id, 2] - model.geom_rbound[geom_id])
         min_z = min(min_z, minimum)
