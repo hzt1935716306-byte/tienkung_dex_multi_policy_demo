@@ -1,0 +1,3 @@
+assets/official_evt2/urdf/* -whitespace
+third_party/deploy_tienkung_walkamp/fsm_walkamp.py -whitespace
+third_party/deploy_tienkung_walkamp/walk_amp.yaml -whitespace

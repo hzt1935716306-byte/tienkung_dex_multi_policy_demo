@@ -9,8 +9,28 @@
 | `configs/demo.json` | Dex EVT Liondance，19 DOF | 单窗口静止稳定、WASD 行走、键盘动作、外部命令 | 已验证 |
 | `configs/walk_only.json` | TienKung2 Lite，20 DOF | 原生行走策略诊断 | 已验证 |
 | `configs/unified_experimental.json` | Dex EVT，29 DOF | 单窗口尝试同时加载行走和动作 | 不稳定，仅供诊断 |
+| `configs/walkamp_official.json` | 官方 xSIM EVT2，完整 29 关节 | 独立运行官方 WALKAMP 840→23 行走策略 | 四场景无头测试通过 |
 
 重要：三个 checkpoint 并不是在同一个 action space 上训练的。本项目在 19-DOF 动作模型上运行全部策略，行走策略多出的 4 个肩 roll/yaw 输出保留在观测历史中但不施加到固定关节，腰部在行走期间由 PD 保持。该适配已通过 MuJoCo 连续切换测试；实机部署前仍应按 [策略兼容说明](docs/POLICY_COMPATIBILITY.md) 做限幅和低增益测试。
+
+## 官方 WALKAMP 第一阶段基线
+
+独立运行官方 23 维 WALKAMP 策略：
+
+```bash
+python run_walkamp.py --config configs/walkamp_official.json
+```
+
+按键仍采用游戏式控制：`W/S` 前后、`A/D` 横移、`Q/E` 转向、`Space` 停止、`Esc` 退出。这个入口使用原样打包的官方 xSIM EVT2 模型，不参与原有 19 维动作切换，因此不会影响 `configs/demo.json`。
+
+四场景无界面回归：
+
+```bash
+python scripts/run_walkamp_headless_suite.py \
+  --config configs/walkamp_official.json
+```
+
+完整观测定义、23/29 关节映射、日志字段、模型审计结论与测试结果见 [WALKAMP 第一阶段文档](docs/WALKAMP_PHASE1.md)。现有 `assets/mjcf/dex_evt_full.xml` 的惯量和碰撞体与官方 evt2 不等效，因此本阶段没有宣称它可以替代官方模型。
 
 ## 目录结构
 
@@ -23,6 +43,7 @@
 ├── scripts/                # 环境检查、语音控制、手动发命令
 ├── src/tienkung_demo/      # 控制器源码
 ├── run_sim.py              # MuJoCo 主入口
+├── run_walkamp.py          # 官方 WALKAMP 独立入口
 └── setup.sh                # 安装脚本
 ```
 

@@ -1,0 +1,19 @@
+{
+  "xsim_mujoco": {
+    "repository": "https://github.com/Open-X-Humanoid/xSIM_MUJOCO",
+    "commit": "942469c660ec93e6d7ae9e78026db81cfa623591",
+    "paths": ["resources/evt2/meshes_new", "resources/evt2/urdf"],
+    "evt2_xml_sha256": "e3b8c47e4f910ce8ba78201bece74ee9cd03c653a596880fe4880fa0f762ebd0",
+    "license": "Apache-2.0"
+  },
+  "deploy_tienkung": {
+    "repository": "https://github.com/Open-X-Humanoid/Deploy_Tienkung",
+    "branch": "3.0",
+    "commit": "9786cf1a7ed9e3bead1a8de47ed6a5c251cb1869",
+    "policy_source": "policy/walk_amp/model/policy.onnx",
+    "policy_sha256": "316f05036b92a3d05ebee79394028db6198af4c7992d0ff8574ea98ec3ad96fc",
+    "fsm_source_sha256": "07f6cdb924ace4d6e6a495cd5fcf8d53a91db28683a45a4907eadd180e3eddc9",
+    "config_source_sha256": "4d92aba0250d0d3ac8ba79a54c29866703dbe6acd010a7f9675e6b7674006162",
+    "license": "BSD-3-Clause"
+  }
+}

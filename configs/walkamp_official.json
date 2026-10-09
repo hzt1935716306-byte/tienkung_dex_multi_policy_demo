@@ -1,0 +1,161 @@
+{
+  "model": "../assets/official_evt2/urdf/evt2.xml",
+  "policy": "../policies/walkamp_official.onnx",
+  "baseline": {
+    "deploy_tienkung_url": "https://github.com/Open-X-Humanoid/Deploy_Tienkung/tree/3.0",
+    "deploy_tienkung_commit": "9786cf1a7ed9e3bead1a8de47ed6a5c251cb1869",
+    "xsim_mujoco_url": "https://github.com/Open-X-Humanoid/xSIM_MUJOCO",
+    "xsim_mujoco_commit": "942469c660ec93e6d7ae9e78026db81cfa623591"
+  },
+  "walkamp": {
+    "motor_num": 29,
+    "action_size": 23,
+    "observation_size": 84,
+    "history_length": 10,
+    "policy_dt": 0.01,
+    "decimation": 1,
+    "warm_start_time": 0.0,
+    "action_scale": 0.25,
+    "clip_observations": 100.0,
+    "clip_actions": 100.0,
+    "observation_scales": {
+      "linear_velocity": 1.0,
+      "angular_velocity": 1.0,
+      "joint_position": 1.0,
+      "joint_velocity": 1.0
+    },
+    "gait_cycle": 0.85,
+    "phase_ratio": [0.38, 0.38],
+    "phase_offset": [0.38, 0.88],
+    "command_limits": [1.0, 0.5, 1.57],
+    "joint_names": [
+      "hip_pitch_l_joint",
+      "hip_pitch_r_joint",
+      "waist_yaw_joint",
+      "hip_roll_l_joint",
+      "hip_roll_r_joint",
+      "waist_roll_joint",
+      "hip_yaw_l_joint",
+      "hip_yaw_r_joint",
+      "waist_pitch_joint",
+      "knee_pitch_l_joint",
+      "knee_pitch_r_joint",
+      "shoulder_pitch_l_joint",
+      "shoulder_pitch_r_joint",
+      "ankle_pitch_l_joint",
+      "ankle_pitch_r_joint",
+      "shoulder_roll_l_joint",
+      "shoulder_roll_r_joint",
+      "ankle_roll_l_joint",
+      "ankle_roll_r_joint",
+      "shoulder_yaw_l_joint",
+      "shoulder_yaw_r_joint",
+      "elbow_pitch_l_joint",
+      "elbow_pitch_r_joint"
+    ],
+    "default_joint_angles": [
+      -0.15, -0.15, 0.0,
+      0.0, 0.0, 0.0,
+      0.0, 0.0, 0.0,
+      0.3, 0.3,
+      0.2, 0.2,
+      -0.15, -0.15,
+      0.1, -0.1,
+      0.0, 0.0,
+      0.0, 0.0,
+      -0.5, -0.5
+    ],
+    "kp": [
+      300.0, 300.0, 400.0,
+      300.0, 300.0, 400.0,
+      150.0, 150.0, 400.0,
+      350.0, 350.0,
+      150.0, 150.0,
+      30.0, 30.0,
+      50.0, 50.0,
+      16.8, 16.8,
+      50.0, 50.0,
+      150.0, 150.0
+    ],
+    "kd": [
+      10.0, 10.0, 5.0,
+      10.0, 10.0, 10.0,
+      5.0, 5.0, 10.0,
+      10.0, 10.0,
+      7.5, 7.5,
+      2.5, 2.5,
+      2.5, 2.5,
+      1.4, 1.4,
+      2.5, 2.5,
+      5.0, 5.0
+    ],
+    "uncontrolled_joints": {
+      "joint_names": [
+        "elbow_yaw_l_joint",
+        "wrist_pitch_l_joint",
+        "wrist_roll_l_joint",
+        "elbow_yaw_r_joint",
+        "wrist_pitch_r_joint",
+        "wrist_roll_r_joint"
+      ],
+      "positions": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      "kp": [30.0, 20.0, 16.8, 30.0, 20.0, 16.8],
+      "kd": [2.5, 2.0, 1.4, 2.5, 2.0, 1.4],
+      "effort_limits": [30.0, 20.0, 16.0, 30.0, 20.0, 16.0]
+    }
+  },
+  "simulation": {
+    "sim_dt": 0.001,
+    "control_dt": 0.01,
+    "solver_iterations": 100,
+    "initial_height": 1.0,
+    "ground_clearance": 0.015,
+    "initial_hold_seconds": 0.0,
+    "fall_threshold": 0.45,
+    "debug_interval": 25,
+    "realtime": true,
+    "max_steps": 100000
+  },
+  "keyboard": {
+    "linear_step": 0.05,
+    "lateral_step": 0.05,
+    "yaw_step": 0.1
+  },
+  "scenarios": {
+    "stand": {
+      "duration_seconds": 6.0,
+      "commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]}
+      ]
+    },
+    "low_forward": {
+      "duration_seconds": 8.0,
+      "commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.25, 0.0, 0.0]}
+      ]
+    },
+    "stop": {
+      "duration_seconds": 10.0,
+      "commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.25, 0.0, 0.0]},
+        {"time": 6.0, "command": [0.0, 0.0, 0.0]}
+      ]
+    },
+    "turn": {
+      "duration_seconds": 8.0,
+      "commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.0, 0.0, 0.25]}
+      ]
+    }
+  },
+  "validation": {
+    "maximum_abs_roll_pitch": 1.0,
+    "maximum_stand_xy_drift": 0.5,
+    "minimum_forward_displacement": 0.05,
+    "minimum_turn_yaw": 0.05,
+    "maximum_stop_speed": 0.5
+  }
+}

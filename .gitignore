@@ -13,5 +13,6 @@ core.*
 *.mp4
 *.npy
 *.npz
+artifacts/
 .idea/
 .vscode/
