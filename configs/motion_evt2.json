@@ -1,0 +1,39 @@
+{
+  "model": "../assets/official_evt2/urdf/evt2.xml",
+  "walkamp_config": "walkamp_official.json",
+  "motions": {
+    "a": {
+      "name": "bow",
+      "display_name": "bow",
+      "path": "../policies/bow.onnx",
+      "duration_steps": 556,
+      "start_step": 0,
+      "torque_scale": 1.0,
+      "effort_scale": 1.0
+    },
+    "b": {
+      "name": "right_hand_open",
+      "display_name": "right hand open",
+      "path": "../policies/right_hand_open.onnx",
+      "duration_steps": 685,
+      "start_step": 0,
+      "torque_scale": 1.0,
+      "effort_scale": 1.0
+    }
+  },
+  "simulation": {
+    "sim_dt": 0.001,
+    "control_dt": 0.01,
+    "solver_iterations": 100,
+    "ground_clearance": 0.015,
+    "fall_threshold": 0.35,
+    "debug_interval": 25,
+    "realtime": true
+  },
+  "validation": {
+    "maximum_abs_roll_pitch": 1.2,
+    "maximum_mean_tracking_error": 0.6,
+    "maximum_torque_saturation_rate": 0.75,
+    "minimum_foot_contact_ratio": 0.5
+  }
+}

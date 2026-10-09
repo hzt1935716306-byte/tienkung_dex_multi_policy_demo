@@ -10,6 +10,7 @@
 | `configs/walk_only.json` | TienKung2 Lite，20 DOF | 原生行走策略诊断 | 已验证 |
 | `configs/unified_experimental.json` | Dex EVT，29 DOF | 单窗口尝试同时加载行走和动作 | 不稳定，仅供诊断 |
 | `configs/walkamp_official.json` | 官方 xSIM EVT2，完整 29 关节 | 独立运行官方 WALKAMP 840→23 行走策略 | 四场景无头测试通过 |
+| `configs/motion_evt2.json` | 官方 xSIM EVT2，完整 29 关节 | 独立运行 BeyondMimic 104→19 鞠躬/摊手策略 | 两个真实策略完整轨迹通过 |
 
 重要：三个 checkpoint 并不是在同一个 action space 上训练的。本项目在 19-DOF 动作模型上运行全部策略，行走策略多出的 4 个肩 roll/yaw 输出保留在观测历史中但不施加到固定关节，腰部在行走期间由 PD 保持。该适配已通过 MuJoCo 连续切换测试；实机部署前仍应按 [策略兼容说明](docs/POLICY_COMPATIBILITY.md) 做限幅和低增益测试。
 
@@ -32,6 +33,23 @@ python scripts/run_walkamp_headless_suite.py \
 
 完整观测定义、23/29 关节映射、日志字段、模型审计结论与测试结果见 [WALKAMP 第一阶段文档](docs/WALKAMP_PHASE1.md)。现有 `assets/mjcf/dex_evt_full.xml` 的惯量和碰撞体与官方 evt2 不等效，因此本阶段没有宣称它可以替代官方模型。
 
+## BeyondMimic 动作第二阶段基线
+
+在官方 29 关节 EVT2 模型中分别运行两个 19 维动作策略：
+
+```bash
+python run_motion_evt2.py --config configs/motion_evt2.json --motion a --mode policy
+python run_motion_evt2.py --config configs/motion_evt2.json --motion b --mode policy
+```
+
+`a` 为鞠躬，`b` 为右手摊开。该入口只验证单个动作，不会与 WALKAMP 在线切换，也不会修改旧的 `configs/demo.json`。无头回归会先运行开环参考轨迹诊断，再运行真实 ONNX 策略：
+
+```bash
+python scripts/run_motion_evt2_headless_suite.py --config configs/motion_evt2.json
+```
+
+参考轨迹在官方动力学模型中会跌倒，但两个反馈策略均可完成完整轨迹；因此参考模式的失败不会被误报成策略失败或策略成功。映射、日志、测试结果及限制见 [BeyondMimic EVT2 第二阶段文档](docs/MOTION_EVT2_PHASE2.md)。
+
 ## 目录结构
 
 ```text
@@ -44,6 +62,7 @@ python scripts/run_walkamp_headless_suite.py \
 ├── src/tienkung_demo/      # 控制器源码
 ├── run_sim.py              # MuJoCo 主入口
 ├── run_walkamp.py          # 官方 WALKAMP 独立入口
+├── run_motion_evt2.py      # 官方 EVT2 上的独立 BeyondMimic 动作入口
 └── setup.sh                # 安装脚本
 ```
 

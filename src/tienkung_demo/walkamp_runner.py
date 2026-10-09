@@ -57,7 +57,12 @@ def setup_initial_pose(
 
 
 class CsvStateLogger:
-    def __init__(self, path: Path, joint_names: list[str]) -> None:
+    def __init__(
+        self,
+        path: Path,
+        joint_names: list[str],
+        extra_columns: list[str] | None = None,
+    ) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.file = path.open("w", encoding="utf-8", newline="")
@@ -103,6 +108,8 @@ class CsvStateLogger:
                     f"{name}.torque_limit",
                 ]
             )
+        self.extra_columns = list(extra_columns or [])
+        columns.extend(self.extra_columns)
         self.writer.writerow(columns)
 
     def write(
@@ -116,6 +123,7 @@ class CsvStateLogger:
         torque: np.ndarray,
         observation: np.ndarray | None,
         action: np.ndarray | None,
+        extra_values: dict[str, float] | None = None,
     ) -> None:
         quaternion = data.sensor("orientation").data.copy()
         rpy = quaternion_to_rpy(quaternion)
@@ -153,6 +161,8 @@ class CsvStateLogger:
                     target.effort[index],
                 ]
             )
+        values = extra_values or {}
+        row.extend(values.get(name, math.nan) for name in self.extra_columns)
         self.writer.writerow(row)
 
     def close(self) -> None:
