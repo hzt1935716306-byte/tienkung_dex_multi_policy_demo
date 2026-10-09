@@ -92,7 +92,7 @@ python scripts/run_multi_evt2_headless_suite.py --config configs/multi_evt2.json
 
 ### Phase 3A.1 鞠躬恢复优化
 
-鞠躬现在会在动作末尾 `0.8 s` 内连续检查实际姿态、速度、双脚支撑和关节状态，在安全窗口提前交给 WALKAMP；末帧等待有明确超时，不会无限冻结。默认退出插值为 `0.6 s`，鞠躬专用 WALKAMP 重入相位为 `0.2125 s`；摆手仍保留原来的 `0.0 s`。
+鞠躬现在会在动作末尾 `0.8 s` 内连续检查实际姿态、速度、双脚支撑和关节状态，在安全窗口提前交给 WALKAMP；末帧等待有明确超时，不会无限冻结。Phase 3A.1 验证时使用 `0.6 s` 退出插值和 `0.2125 s` 鞠躬重入相位；当前默认值已由 Phase 3A.3 的完整退出对照更新。
 
 专项无头测试（包含插值/相位对照、轻微扰动和同一物理状态连续 20 次鞠躬）：
 
@@ -114,6 +114,22 @@ python scripts/run_smooth_entry_suite.py --config configs/multi_evt2.json
 ```
 
 测试结果、关节角/力矩曲线和调参依据见 [Phase 3A.2 文档](docs/SMOOTH_ENTRY_PHASE3A2.md)。
+
+### Phase 3A.3 动作平滑退出
+
+BeyondMimic 返回 WALKAMP 时，现在以最后一份实际下发的完整 29 关节目标为连续起点。交接同时覆盖关节位置、Kp/Kd、前馈、effort limit 和 torque scale；两个策略在过渡期间继续使用实时状态闭环更新。WALKAMP 可通过不修改正式状态的候选相位预览进行诊断，并支持真实测量历史或重复单帧历史。
+
+默认鞠躬使用真实 10 帧历史，摆手继续使用重复历史；两者选择的重入相位均为 `0.31875 s`，退出插值均为 `0.6 s`。鞠躬与摆手分别保留最后 `0.8 s` 的安全候选窗口，只有安全条件连续成立才提前接管。
+
+专项套件包含 A/B/C 退出对照、8 个步态相位、4 个退出时长、摆手尾窗、6 个扰动场景、同一物理状态连续 20 次鞠躬、20 次摆手和 20 次交替动作：
+
+```bash
+python scripts/run_smooth_exit_suite.py \
+  --config configs/multi_evt2.json \
+  --output-dir artifacts/smooth_exit_phase3a3
+```
+
+全部场景无跌倒并完成控制权回收，但鞠躬在 WALKAMP 接管后仍存在小幅单脚支撑恢复事件。因此当前结果是平滑度和接管状态改善，不代表恢复迈步已完全消除；后续更合理的方案是加入 READY/Stand 平衡策略。完整数据、失败对照和曲线见 [Phase 3A.3 文档](docs/SMOOTH_EXIT_PHASE3A3.md)。
 
 ## 目录结构
 

@@ -152,6 +152,18 @@ class MotionEvt2Policy(MotionPolicy):
         self.walkamp_reentry_phase_time = float(
             config.get("walkamp_reentry_phase_time", 0.0)
         )
+        self.transition_out_seconds = float(
+            config.get("transition_out_seconds", 0.0)
+        )
+        if self.transition_out_seconds < 0.0:
+            raise ValueError("transition_out_seconds must be non-negative")
+        self.walkamp_reentry_history_mode = str(
+            config.get("walkamp_reentry_history_mode", "")
+        )
+        if self.walkamp_reentry_history_mode not in ("", "repeated", "measured"):
+            raise ValueError(
+                "walkamp_reentry_history_mode must be repeated or measured"
+            )
         self.exit_window = dict(config.get("exit_window", {}))
         self._validate_contract()
 

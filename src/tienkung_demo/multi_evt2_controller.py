@@ -13,6 +13,7 @@ from .transition_controller import (
     TargetRateLimiter,
     blend_targets,
     continuous_group_transition_target,
+    continuous_transition_target,
     copy_target,
     endpoint_progress,
     joint_group_indices,
@@ -124,6 +125,28 @@ class MultiEvt2Controller:
         self.entry_anchor_target: ControlTarget | None = None
         self.entry_balance_start: ControlTarget | None = None
         self.entry_group_alphas = {"legs": 0.0, "waist": 0.0, "arms": 0.0}
+        exit_config = config.get("exit", {})
+        self.exit_mode = str(exit_config.get("mode", "legacy"))
+        if self.exit_mode not in ("legacy", "continuous"):
+            raise ValueError(f"Unknown exit mode {self.exit_mode!r}")
+        self.exit_history_mode = str(
+            exit_config.get("history_mode", "repeated")
+        )
+        if self.exit_history_mode not in ("repeated", "measured"):
+            raise ValueError(
+                f"Unknown WALKAMP exit history mode {self.exit_history_mode!r}"
+            )
+        self.exit_handoff_target = str(
+            exit_config.get("handoff_target", "neutral")
+        )
+        if self.exit_handoff_target not in ("neutral", "preview"):
+            raise ValueError(
+                f"Unknown exit handoff target {self.exit_handoff_target!r}"
+            )
+        self.exit_anchor_target: ControlTarget | None = None
+        self.exit_source_start: ControlTarget | None = None
+        self.last_exit_previews: list[dict[str, Any]] = []
+        self.selected_exit_preview: dict[str, Any] = {}
         self.event_history: list[dict[str, Any]] = []
         self.state_history: list[dict[str, Any]] = [
             {"step": 0, "state": self.state.value, "reason": "startup"}
@@ -232,6 +255,10 @@ class MultiEvt2Controller:
         self.entry_anchor_target = None
         self.entry_balance_start = None
         self.entry_group_alphas = {"legs": 0.0, "waist": 0.0, "arms": 0.0}
+        self.exit_anchor_target = None
+        self.exit_source_start = None
+        self.last_exit_previews = []
+        self.selected_exit_preview = {}
         self._update_record(record, CommandStatus.ACCEPTED)
         self._set_state(ControllerState.READY_CHECK, f"accepted:{action_key}")
         return record
@@ -331,10 +358,128 @@ class MultiEvt2Controller:
         self.last_readiness = {"metrics": metrics, "reasons": reasons}
         return not reasons, reasons, metrics
 
+    def _reentry_phase_time(self) -> float:
+        return (
+            self.active_motion.walkamp_reentry_phase_time
+            if self.active_motion is not None
+            else float(self.config.get("walkamp_reentry_phase_time", 0.0))
+        )
+
+    def _transition_out_seconds(self) -> float:
+        if (
+            self.active_motion is not None
+            and self.active_motion.transition_out_seconds > 0.0
+        ):
+            return self.active_motion.transition_out_seconds
+        return float(self.config["transition_out_seconds"])
+
+    def _reentry_history_mode(self) -> str:
+        if (
+            self.active_motion is not None
+            and self.active_motion.walkamp_reentry_history_mode
+        ):
+            return self.active_motion.walkamp_reentry_history_mode
+        return self.exit_history_mode
+
+    def _predicted_pd_torque(self, target: ControlTarget) -> np.ndarray:
+        q = self.data.qpos[self.joint_map.qpos_adr]
+        qd = self.data.qvel[self.joint_map.qvel_adr]
+        torque = target.torque_scale * (
+            target.kp * (target.q - q)
+            - target.kd * qd
+            + target.feedforward
+        )
+        return np.clip(torque, -target.effort, target.effort)
+
+    def _preview_walkamp(
+        self,
+        source_target: ControlTarget,
+        phase_time: float,
+        history_mode: str | None = None,
+    ) -> tuple[ControlTarget, dict[str, Any]]:
+        mode = self._reentry_history_mode() if history_mode is None else history_mode
+        preview = self.walkamp.preview_from_live_state(
+            (0.0, 0.0, 0.0),
+            phase_time=phase_time,
+            history_mode=mode,
+            previous_target=self.last_target,
+        )
+        torque = self._predicted_pd_torque(preview.target)
+        deltas = {
+            group: float(
+                np.max(
+                    np.abs(
+                        preview.target.q[indices]
+                        - source_target.q[indices]
+                    )
+                )
+            )
+            for group, indices in self.group_indices.items()
+        }
+        effort_ratio = np.abs(torque) / np.maximum(preview.target.effort, 1.0e-9)
+        score_config = self.config.get("exit", {}).get("preview_score", {})
+        target_weight = float(score_config.get("target_delta_weight", 1.0))
+        torque_weight = float(score_config.get("torque_ratio_weight", 0.25))
+        metrics: dict[str, Any] = {
+            "phase_time": float(preview.phase_time),
+            "history_mode": preview.history_mode,
+            "measured_frames": preview.measured_frames,
+            "target_delta": deltas,
+            "maximum_abs_action": float(np.max(np.abs(preview.action))),
+            "maximum_abs_predicted_torque": float(np.max(np.abs(torque))),
+            "maximum_predicted_effort_ratio": float(np.max(effort_ratio)),
+            "predicted_saturation_fraction": float(np.mean(effort_ratio >= 1.0)),
+        }
+        metrics["preview_score"] = target_weight * max(deltas.values()) + (
+            torque_weight * metrics["maximum_predicted_effort_ratio"]
+        )
+        return preview.target, metrics
+
+    def _preview_candidates(
+        self,
+        source_target: ControlTarget,
+    ) -> tuple[ControlTarget, dict[str, Any]]:
+        settings = self.config.get("exit", {})
+        phase_candidates = settings.get(
+            "phase_candidates",
+            self.config.get("walkamp_reentry_phase_candidates", [0.0]),
+        )
+        selected_phase = self._reentry_phase_time()
+        phases = sorted(
+            {
+                *(float(value) for value in phase_candidates),
+                float(selected_phase),
+            }
+        )
+        candidates: list[tuple[ControlTarget, dict[str, Any]]] = [
+            self._preview_walkamp(source_target, phase)
+            for phase in phases
+        ]
+        selected_target, selected_metrics = min(
+            candidates,
+            key=lambda item: abs(float(item[1]["phase_time"]) - selected_phase),
+        )
+        self.last_exit_previews = [metrics for _, metrics in candidates]
+        self.selected_exit_preview = dict(selected_metrics)
+        return selected_target, selected_metrics
+
+    def _handoff_walkamp_target(
+        self,
+        motion_target: ControlTarget,
+    ) -> ControlTarget | None:
+        if self.exit_handoff_target != "preview":
+            return None
+        target, _ = self._preview_walkamp(
+            motion_target,
+            self._reentry_phase_time(),
+        )
+        return target
+
     def handoff_feasible(
         self,
         contacts: dict[str, float],
         motion_target: ControlTarget,
+        walkamp_target: ControlTarget | None = None,
     ) -> tuple[bool, list[str], dict[str, float]]:
         """Check whether WALKAMP may safely take over the current live state."""
         limits = self.config["handoff"]
@@ -369,17 +514,31 @@ class MultiEvt2Controller:
             ),
         )
         reasons = [name for passed, name in checks if not passed]
-        neutral = self.walkamp.neutral_target("handoff_check")
+        handoff_target = (
+            self.walkamp.neutral_target("handoff_check")
+            if walkamp_target is None
+            else walkamp_target
+        )
         actual_q = self.data.qpos[self.joint_map.qpos_adr]
         for group, indices in self.group_indices.items():
-            posture_error = float(np.max(np.abs(actual_q[indices] - neutral.q[indices])))
-            target_delta = float(np.max(np.abs(motion_target.q[indices] - neutral.q[indices])))
+            posture_error = float(
+                np.max(np.abs(actual_q[indices] - handoff_target.q[indices]))
+            )
+            target_delta = float(
+                np.max(
+                    np.abs(
+                        motion_target.q[indices]
+                        - handoff_target.q[indices]
+                    )
+                )
+            )
             metrics[f"{group}_posture_error"] = posture_error
             metrics[f"{group}_target_delta"] = target_delta
             if posture_error > float(limits["maximum_posture_error"][group]):
                 reasons.append(f"{group}_posture_error")
             if target_delta > float(limits["maximum_target_delta"][group]):
                 reasons.append(f"{group}_target_delta")
+        metrics["handoff_target_preview"] = float(walkamp_target is not None)
         self.last_handoff = {"metrics": metrics, "reasons": reasons}
         return not reasons, reasons, metrics
 
@@ -510,26 +669,46 @@ class MultiEvt2Controller:
             self._update_record(self.active_record, CommandStatus.FAILED, reason)
         self._begin_transition_out(f"failure:{reason}")
 
-    def _start_walkamp_interpolation(self, reason: str) -> None:
-        phase_time = (
-            self.active_motion.walkamp_reentry_phase_time
-            if self.active_motion is not None
-            else float(self.config.get("walkamp_reentry_phase_time", 0.0))
+    def _start_walkamp_interpolation(
+        self,
+        reason: str,
+        source_target: ControlTarget,
+    ) -> None:
+        phase_time = self._reentry_phase_time()
+        _, selected_preview = self._preview_candidates(source_target)
+        history_mode = self._reentry_history_mode()
+        initialization = self.walkamp.begin_from_live_state(
+            (0.0, 0.0, 0.0),
+            phase_time=phase_time,
+            history_mode=history_mode,
+            previous_target=self.last_target,
         )
-        self.walkamp.begin_from_live_state((0.0, 0.0, 0.0), phase_time=phase_time)
         self.reentry_started = True
         self.reentry_step = 0
         self.recover_stable_steps = 0
+        self.exit_anchor_target = None
+        self.exit_source_start = None
         self._log_event(
             "walkamp_interpolation_started",
             reason=reason,
+            exit_mode=self.exit_mode,
+            history_mode=history_mode,
+            handoff_target=self.exit_handoff_target,
             frozen_motion_step=self.frozen_motion_step,
             exit_wait_seconds=self.state_step * self.control_dt,
             walkamp_phase_time=phase_time,
+            initialization=initialization,
+            selected_preview=selected_preview,
+            preview_candidates=self.last_exit_previews,
             metrics=self._state_metrics(self.last_contacts),
         )
 
-    def _begin_transition_out(self, reason: str, handoff_prequalified: bool = False) -> None:
+    def _begin_transition_out(
+        self,
+        reason: str,
+        handoff_prequalified: bool = False,
+        source_target: ControlTarget | None = None,
+    ) -> None:
         self.walkamp.set_command((0.0, 0.0, 0.0))
         if self.active_motion is not None:
             self.frozen_motion_step = min(
@@ -539,6 +718,8 @@ class MultiEvt2Controller:
         self.recover_stable_steps = 0
         self.reentry_started = False
         self.reentry_step = 0
+        self.exit_anchor_target = None
+        self.exit_source_start = None
         self._set_state(ControllerState.TRANSITION_OUT, reason)
         self._log_event(
             "transition_out_started",
@@ -548,7 +729,10 @@ class MultiEvt2Controller:
             metrics=self._state_metrics(self.last_contacts),
         )
         if handoff_prequalified:
-            self._start_walkamp_interpolation("prequalified_tail_window")
+            self._start_walkamp_interpolation(
+                "prequalified_tail_window",
+                self.last_target if source_target is None else source_target,
+            )
 
     def _enter_terminal_failure(
         self,
@@ -601,6 +785,8 @@ class MultiEvt2Controller:
         self.entry_anchor_target = None
         self.entry_balance_start = None
         self.entry_group_alphas = {"legs": 0.0, "waist": 0.0, "arms": 0.0}
+        self.exit_anchor_target = None
+        self.exit_source_start = None
         self._set_state(ControllerState.WALKAMP_IDLE, "recovery_complete")
 
     def fail(self, reason: str) -> None:
@@ -774,7 +960,12 @@ class MultiEvt2Controller:
             )
 
         if in_exit_window:
-            feasible, reasons, metrics = self.handoff_feasible(contacts, target)
+            walkamp_target = self._handoff_walkamp_target(target)
+            feasible, reasons, metrics = self.handoff_feasible(
+                contacts,
+                target,
+                walkamp_target,
+            )
             self.handoff_stable_steps = self.handoff_stable_steps + 1 if feasible else 0
             required = self._duration_steps(float(exit_window["stable_seconds"]))
             if self.handoff_stable_steps >= required:
@@ -794,10 +985,19 @@ class MultiEvt2Controller:
                     ),
                     metrics=metrics,
                 )
-                self._begin_transition_out("early_handoff_window", handoff_prequalified=True)
+                self._begin_transition_out(
+                    "early_handoff_window",
+                    handoff_prequalified=True,
+                    source_target=target,
+                )
 
         if self.state == ControllerState.MOTION and self.abort_pending:
-            feasible, _, metrics = self.handoff_feasible(contacts, target)
+            walkamp_target = self._handoff_walkamp_target(target)
+            feasible, _, metrics = self.handoff_feasible(
+                contacts,
+                target,
+                walkamp_target,
+            )
             self.abort_safe_steps = self.abort_safe_steps + 1 if feasible else 0
             if self.abort_safe_steps >= self._duration_steps(
                 self.config["handoff"]["abort_stable_seconds"]
@@ -809,7 +1009,11 @@ class MultiEvt2Controller:
                     stable_seconds=self.abort_safe_steps * self.control_dt,
                     metrics=metrics,
                 )
-                self._begin_transition_out("safe_abort_window", handoff_prequalified=True)
+                self._begin_transition_out(
+                    "safe_abort_window",
+                    handoff_prequalified=True,
+                    source_target=target,
+                )
         if (
             self.state == ControllerState.MOTION
             and self.motion_step >= self.active_motion.duration_steps
@@ -827,7 +1031,11 @@ class MultiEvt2Controller:
                 reference_steps_remaining=0,
                 metrics=self._state_metrics(contacts),
             )
-            self._begin_transition_out(reason, handoff_prequalified=False)
+            self._begin_transition_out(
+                reason,
+                handoff_prequalified=False,
+                source_target=target,
+            )
         return ControllerOutput(target, observation, action, 1.0)
 
     def _step_transition_out(self, contacts: dict[str, float]) -> ControllerOutput:
@@ -839,7 +1047,12 @@ class MultiEvt2Controller:
             source = self.last_target
 
         if not self.reentry_started:
-            feasible, reasons, metrics = self.handoff_feasible(contacts, source)
+            walkamp_target = self._handoff_walkamp_target(source)
+            feasible, reasons, metrics = self.handoff_feasible(
+                contacts,
+                source,
+                walkamp_target,
+            )
             self.handoff_stable_steps = self.handoff_stable_steps + 1 if feasible else 0
             target = source
             progress = 0.0
@@ -853,7 +1066,10 @@ class MultiEvt2Controller:
                     stable_seconds=self.handoff_stable_steps * self.control_dt,
                     metrics=metrics,
                 )
-                self._start_walkamp_interpolation("terminal_wait_verified")
+                self._start_walkamp_interpolation(
+                    "terminal_wait_verified",
+                    source,
+                )
             elif self.state_step >= self._duration_steps(settings["terminal_wait_timeout_seconds"]):
                 reason = "handoff_timeout:" + ",".join(reasons)
                 self._enter_terminal_failure(
@@ -865,9 +1081,45 @@ class MultiEvt2Controller:
                 )
         else:
             walk_target, _, _ = self.walkamp.step()
-            duration = self._duration_steps(self.config["transition_out_seconds"])
-            progress = min((self.reentry_step + 1) / duration, 1.0)
-            target = blend_targets(source, walk_target, progress, "transition_out")
+            duration = self._duration_steps(self._transition_out_seconds())
+            if self.exit_mode == "legacy":
+                progress = min((self.reentry_step + 1) / duration, 1.0)
+                target = blend_targets(
+                    source,
+                    walk_target,
+                    progress,
+                    "transition_out",
+                )
+            else:
+                progress = endpoint_progress(self.reentry_step, duration)
+                if self.exit_anchor_target is None:
+                    self.exit_anchor_target = copy_target(
+                        self.last_target,
+                        "exit_anchor_applied",
+                    )
+                    self.exit_source_start = copy_target(
+                        source,
+                        "exit_source_start",
+                    )
+                assert self.exit_source_start is not None
+                target = continuous_transition_target(
+                    self.exit_anchor_target,
+                    self.exit_source_start,
+                    source,
+                    walk_target,
+                    progress,
+                    "transition_out_continuous",
+                )
+                if self.reentry_step == 0:
+                    self._log_event(
+                        "exit_transition_continuity",
+                        exit_mode=self.exit_mode,
+                        raw_target_delta=self._target_group_deltas(
+                            target,
+                            self.exit_anchor_target,
+                        ),
+                        metrics=self._state_metrics(contacts),
+                    )
             self.reentry_step += 1
             if progress >= 1.0:
                 self.recover_stable_steps = 0
@@ -875,6 +1127,9 @@ class MultiEvt2Controller:
                 self._log_event(
                     "walkamp_control_acquired",
                     transition_seconds=self.reentry_step * self.control_dt,
+                    exit_mode=self.exit_mode,
+                    history_mode=self._reentry_history_mode(),
+                    selected_preview=self.selected_exit_preview,
                     metrics=self._state_metrics(contacts),
                 )
                 return ControllerOutput(target, observation, action, progress)
@@ -904,6 +1159,7 @@ class MultiEvt2Controller:
 
     def step(self, contacts: dict[str, float]) -> ControllerOutput:
         self.last_contacts = dict(contacts)
+        self.walkamp.record_measured_state(self.last_target)
         emergency = self._emergency_reasons()
         if emergency and self.state not in (
             ControllerState.WALKAMP_IDLE,
@@ -942,6 +1198,10 @@ class MultiEvt2Controller:
             "state": self.state.value,
             "busy": self.busy,
             "entry_mode": self.entry_mode,
+            "exit_mode": self.exit_mode,
+            "exit_history_mode": self.exit_history_mode,
+            "exit_handoff_target": self.exit_handoff_target,
+            "selected_exit_preview": self.selected_exit_preview,
             "recovery_failed": self.recovery_failed,
             "last_rejection_reason": self.last_rejection_reason,
             "last_start_delta": self.last_start_delta,

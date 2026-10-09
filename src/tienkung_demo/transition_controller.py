@@ -180,6 +180,33 @@ def continuous_group_transition_target(
     )
 
 
+def continuous_transition_target(
+    anchor_target: ControlTarget,
+    source_start: ControlTarget,
+    source_target: ControlTarget,
+    destination_target: ControlTarget,
+    progress: float,
+    label: str,
+) -> ControlTarget:
+    """Blend live targets while exactly continuing the last applied target.
+
+    The source policy remains live during the transition. Its change from the
+    first source sample is retained and decays as the destination acquires
+    control. At progress zero the result is exactly ``anchor_target``; at one
+    it is exactly ``destination_target``.
+    """
+    alpha = quintic_alpha(progress)
+    source = copy_target(anchor_target, f"{label}_live_source")
+    for field in ("q", "kp", "kd", "feedforward", "effort"):
+        getattr(source, field)[:] += alpha * (
+            getattr(source_target, field) - getattr(source_start, field)
+        )
+    source.torque_scale += alpha * (
+        source_target.torque_scale - source_start.torque_scale
+    )
+    return blend_targets(source, destination_target, progress, label)
+
+
 def prealign_target(
     balance_target: ControlTarget,
     motion_target: ControlTarget,

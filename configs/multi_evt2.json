@@ -16,7 +16,9 @@
       "start_step": 0,
       "torque_scale": 1.0,
       "effort_scale": 1.0,
-      "walkamp_reentry_phase_time": 0.2125,
+      "walkamp_reentry_phase_time": 0.31875,
+      "walkamp_reentry_history_mode": "measured",
+      "transition_out_seconds": 0.6,
       "exit_window": {
         "enabled": true,
         "seconds_before_end": 0.8,
@@ -31,10 +33,12 @@
       "start_step": 0,
       "torque_scale": 1.0,
       "effort_scale": 1.0,
-      "walkamp_reentry_phase_time": 0.0,
+      "walkamp_reentry_phase_time": 0.31875,
+      "walkamp_reentry_history_mode": "repeated",
+      "transition_out_seconds": 0.6,
       "exit_window": {
-        "enabled": false,
-        "seconds_before_end": 0.0,
+        "enabled": true,
+        "seconds_before_end": 0.8,
         "stable_seconds": 0.15
       }
     }
@@ -56,6 +60,16 @@
         "legs": 1.0,
         "waist": 1.0,
         "arms": 1.0
+      }
+    },
+    "exit": {
+      "mode": "continuous",
+      "history_mode": "measured",
+      "handoff_target": "neutral",
+      "phase_candidates": [0.0, 0.10625, 0.2125, 0.31875, 0.425, 0.53125, 0.6375, 0.74375],
+      "preview_score": {
+        "target_delta_weight": 1.0,
+        "torque_ratio_weight": 0.25
       }
     },
     "ready_check": {
@@ -237,6 +251,41 @@
       "perturbations": [
         {
           "time": 8.75,
+          "delta_world_velocity": [0.04, 0.0],
+          "delta_pitch_angular_velocity": 0.04
+        }
+      ]
+    },
+    "wave_initial_forward": {
+      "duration_seconds": 15.0,
+      "initial_state": {
+        "pitch": 0.01,
+        "world_velocity": [0.01, 0.0],
+        "pitch_angular_velocity": 0.01
+      },
+      "events": [
+        {"time": 1.0, "command": "b"}
+      ]
+    },
+    "wave_initial_backward": {
+      "duration_seconds": 15.0,
+      "initial_state": {
+        "pitch": -0.01,
+        "world_velocity": [-0.01, 0.0],
+        "pitch_angular_velocity": -0.01
+      },
+      "events": [
+        {"time": 1.0, "command": "b"}
+      ]
+    },
+    "wave_tail_perturbed": {
+      "duration_seconds": 15.0,
+      "events": [
+        {"time": 2.0, "command": "b"}
+      ],
+      "perturbations": [
+        {
+          "time": 10.05,
           "delta_world_velocity": [0.04, 0.0],
           "delta_pitch_angular_velocity": 0.04
         }

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import deque
+from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
@@ -132,6 +134,25 @@ OFFICIAL_KD = np.array(
     ],
     dtype=np.float64,
 )
+
+
+@dataclass(frozen=True)
+class WalkAmpMeasuredFrame:
+    angular_velocity: np.ndarray
+    projected_gravity: np.ndarray
+    joint_position: np.ndarray
+    joint_velocity: np.ndarray
+    executed_action: np.ndarray
+
+
+@dataclass(frozen=True)
+class WalkAmpPreview:
+    target: ControlTarget
+    history: np.ndarray
+    action: np.ndarray
+    phase_time: float
+    history_mode: str
+    measured_frames: int
 
 
 def _resolve_path(value: str, config_dir: Path) -> str:
@@ -328,6 +349,9 @@ class WalkAmpPolicy:
         self.first_observation = True
         self.last_observation = np.zeros(self.observation_size, dtype=np.float32)
         self.last_target: ControlTarget | None = None
+        self.measured_frames: deque[WalkAmpMeasuredFrame] = deque(
+            maxlen=self.history_length + 1
+        )
 
     def set_command(self, command: np.ndarray | list[float] | tuple[float, float, float]) -> None:
         command_array = np.asarray(command, dtype=np.float32)
@@ -353,28 +377,129 @@ class WalkAmpPolicy:
         self.timer_gait = 0.0
         self.first_observation = True
         self.last_target = None
+        self.measured_frames.clear()
+
+    def _action_from_target(self, target: ControlTarget | None) -> np.ndarray:
+        if target is None:
+            q = self.data.qpos[self.joint_map.qpos_adr[self.policy_indices]]
+        else:
+            q = target.q[self.policy_indices]
+        return np.clip(
+            (q - self.default_angles) / self.action_scale,
+            -self.clip_actions,
+            self.clip_actions,
+        ).astype(np.float32)
+
+    def _measured_frame(self, executed_action: np.ndarray) -> WalkAmpMeasuredFrame:
+        orientation = quat_normalize(self.data.sensor("orientation").data.copy())
+        return WalkAmpMeasuredFrame(
+            angular_velocity=self.data.sensor("angular-velocity").data.copy(),
+            projected_gravity=inverse_rotate(
+                orientation,
+                np.array([0.0, 0.0, -1.0]),
+            ),
+            joint_position=(
+                self.data.qpos[self.joint_map.qpos_adr[self.policy_indices]]
+                - self.default_angles
+            ).copy(),
+            joint_velocity=self.data.qvel[
+                self.joint_map.qvel_adr[self.policy_indices]
+            ].copy(),
+            executed_action=np.asarray(executed_action, dtype=np.float32).copy(),
+        )
+
+    def record_measured_state(self, applied_target: ControlTarget | None) -> None:
+        """Record physical state and the target that was actually applied."""
+        self.measured_frames.append(
+            self._measured_frame(self._action_from_target(applied_target))
+        )
+
+    def _frame_observation(
+        self,
+        frame: WalkAmpMeasuredFrame,
+        command: np.ndarray,
+        phase_time: float,
+    ) -> np.ndarray:
+        phase = gait_phase(
+            phase_time,
+            self.gait_cycle,
+            self.phase_offset[0],
+            self.phase_offset[1],
+            self.phase_ratio[0],
+            self.phase_ratio[1],
+        )
+        observation = np.concatenate(
+            [
+                frame.angular_velocity,
+                frame.projected_gravity,
+                command,
+                frame.joint_position,
+                frame.joint_velocity,
+                frame.executed_action,
+                phase,
+            ]
+        ).astype(np.float32)
+        if observation.shape != (self.observation_size,):
+            raise RuntimeError(
+                f"WALKAMP observation has shape {observation.shape}, "
+                f"expected ({self.observation_size},)"
+            )
+        return observation
+
+    def _measured_history(
+        self,
+        command: np.ndarray,
+        phase_time: float,
+    ) -> tuple[np.ndarray, int]:
+        frames = list(self.measured_frames)[-self.history_length :]
+        if not frames:
+            frames = [self._measured_frame(self._action_from_target(None))]
+        measured_count = len(frames)
+        if len(frames) < self.history_length:
+            frames = [frames[0]] * (self.history_length - len(frames)) + frames
+        observations = []
+        for index, frame in enumerate(frames):
+            frame_time = phase_time - (self.history_length - index) * self.policy_dt
+            observations.append(
+                self._frame_observation(frame, command, frame_time)
+            )
+        return np.concatenate(observations).astype(np.float32), measured_count
 
     def begin_from_live_state(
         self,
         command: np.ndarray | list[float] | tuple[float, float, float] = (0.0, 0.0, 0.0),
         phase_time: float = 0.0,
-    ) -> None:
+        history_mode: str = "repeated",
+        previous_target: ControlTarget | None = None,
+    ) -> dict[str, float | str]:
         """Rebuild history and previous actions from the current robot state."""
         self.set_command(command)
         self.timer_gait = float(phase_time) % self.gait_cycle
-        current_q = self.data.qpos[self.joint_map.qpos_adr[self.policy_indices]]
-        seeded_actions = (current_q - self.default_angles) / self.action_scale
-        self.last_actions[:] = np.clip(
-            seeded_actions,
-            -self.clip_actions,
-            self.clip_actions,
-        ).astype(np.float32)
+        if history_mode not in ("repeated", "measured"):
+            raise ValueError(f"Unknown WALKAMP history mode {history_mode!r}")
+        seed_target = previous_target if history_mode == "measured" else None
+        self.last_actions[:] = self._action_from_target(seed_target)
         self.actions[:] = self.last_actions
+        measured_count = 0
+        if history_mode == "measured":
+            history, measured_count = self._measured_history(
+                self.command,
+                self.timer_gait,
+            )
+            self.history[:] = history
+        else:
+            observation = self._single_observation()
+            self.history[:] = np.tile(observation, self.history_length)
         observation = self._single_observation()
-        self.history[:] = np.tile(observation, self.history_length)
         self.last_observation[:] = observation
         self.first_observation = False
         self.last_target = None
+        return {
+            "history_mode": history_mode,
+            "measured_frames": float(measured_count),
+            "phase_time": self.timer_gait,
+            "maximum_abs_previous_action": float(np.max(np.abs(self.last_actions))),
+        }
 
     def neutral_target(self, label: str = "walkamp_hold") -> ControlTarget:
         q = np.zeros(len(self.joint_map.names), dtype=np.float64)
@@ -402,34 +527,78 @@ class WalkAmpPolicy:
         )
 
     def _single_observation(self) -> np.ndarray:
-        orientation = quat_normalize(self.data.sensor("orientation").data.copy())
-        angular_velocity = self.data.sensor("angular-velocity").data.copy()
-        q = self.data.qpos[self.joint_map.qpos_adr[self.policy_indices]]
-        qd = self.data.qvel[self.joint_map.qvel_adr[self.policy_indices]]
-        phase = gait_phase(
+        return self._frame_observation(
+            self._measured_frame(self.last_actions),
+            self.command,
             self.timer_gait,
-            self.gait_cycle,
-            self.phase_offset[0],
-            self.phase_offset[1],
-            self.phase_ratio[0],
-            self.phase_ratio[1],
         )
-        observation = np.concatenate(
-            [
-                angular_velocity,
-                inverse_rotate(orientation, np.array([0.0, 0.0, -1.0])),
-                self.command,
-                q - self.default_angles,
-                qd,
-                self.last_actions,
-                phase,
-            ]
-        ).astype(np.float32)
-        if observation.shape != (self.observation_size,):
-            raise RuntimeError(
-                f"WALKAMP observation has shape {observation.shape}, expected ({self.observation_size},)"
+
+    def _target_from_action(self, action: np.ndarray, label: str) -> ControlTarget:
+        target = self.neutral_target(label)
+        target.q[self.policy_indices] = (
+            self.default_angles + action * self.action_scale
+        )
+        target.q = np.clip(
+            target.q,
+            self.joint_map.ranges[:, 0],
+            self.joint_map.ranges[:, 1],
+        )
+        return target
+
+    def preview_from_live_state(
+        self,
+        command: np.ndarray | list[float] | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        phase_time: float = 0.0,
+        history_mode: str = "repeated",
+        previous_target: ControlTarget | None = None,
+    ) -> WalkAmpPreview:
+        """Preview the first policy output without changing policy state."""
+        command_array = np.asarray(command, dtype=np.float32)
+        if command_array.shape != (3,):
+            raise ValueError("WALKAMP command must be [vx, vy, yaw_rate]")
+        phase_time = float(phase_time) % self.gait_cycle
+        if history_mode == "repeated":
+            previous_action = self._action_from_target(None)
+            current = self._frame_observation(
+                self._measured_frame(previous_action),
+                command_array,
+                phase_time,
             )
-        return observation
+            history = np.tile(current, self.history_length).astype(np.float32)
+            measured_count = 0
+        elif history_mode == "measured":
+            history, measured_count = self._measured_history(
+                command_array,
+                phase_time,
+            )
+            current = self._frame_observation(
+                self._measured_frame(self._action_from_target(previous_target)),
+                command_array,
+                phase_time,
+            )
+            history = np.concatenate(
+                [history[self.observation_size :], current]
+            ).astype(np.float32)
+        else:
+            raise ValueError(f"Unknown WALKAMP history mode {history_mode!r}")
+        clipped = np.clip(
+            history,
+            -self.clip_observations,
+            self.clip_observations,
+        ).astype(np.float32)
+        output = self.session.run(
+            None,
+            {self.input_name: clipped.reshape(1, -1)},
+        )[0][0]
+        action = np.clip(output, -self.clip_actions, self.clip_actions)
+        return WalkAmpPreview(
+            target=self._target_from_action(action, "walkamp_preview"),
+            history=clipped,
+            action=action.copy(),
+            phase_time=phase_time,
+            history_mode=history_mode,
+            measured_frames=measured_count,
+        )
 
     def _update_history(self, observation: np.ndarray) -> None:
         if self.first_observation:
@@ -448,9 +617,7 @@ class WalkAmpPolicy:
         output = self.session.run(None, {self.input_name: clipped_history.reshape(1, -1)})[0][0]
         self.actions[:] = np.clip(output, -self.clip_actions, self.clip_actions)
 
-        target = self.neutral_target("walkamp_policy")
-        target.q[self.policy_indices] = self.default_angles + self.actions * self.action_scale
-        target.q = np.clip(target.q, self.joint_map.ranges[:, 0], self.joint_map.ranges[:, 1])
+        target = self._target_from_action(self.actions, "walkamp_policy")
 
         self.last_actions[:] = self.actions
         self.last_observation[:] = observation

@@ -24,6 +24,7 @@ from tienkung_demo.transition_controller import (
     TargetRateLimiter,
     blend_targets,
     continuous_group_transition_target,
+    continuous_transition_target,
     endpoint_progress,
     joint_group_indices,
     prealign_group_target,
@@ -179,10 +180,87 @@ class MultiEvt2Tests(unittest.TestCase):
         self.assertAlmostEqual(start.torque_scale, anchor.torque_scale)
         self.assertAlmostEqual(finish.torque_scale, motion.torque_scale)
 
+    def test_continuous_exit_has_exact_complete_target_endpoints(self) -> None:
+        _, walkamp, _, _ = self.build_stack()
+        anchor = walkamp.neutral_target("anchor")
+        source_start = walkamp.neutral_target("source_start")
+        live_source = walkamp.neutral_target("live_source")
+        destination = walkamp.neutral_target("destination")
+        for index, field in enumerate(
+            ("q", "kp", "kd", "feedforward", "effort"),
+            1,
+        ):
+            getattr(anchor, field)[:] += 0.1 * index
+            getattr(source_start, field)[:] -= 0.2 * index
+            getattr(live_source, field)[:] += 0.3 * index
+            getattr(destination, field)[:] -= 0.4 * index
+        anchor.torque_scale = 0.7
+        source_start.torque_scale = 0.8
+        live_source.torque_scale = 0.9
+        destination.torque_scale = 1.0
+
+        start = continuous_transition_target(
+            anchor,
+            source_start,
+            live_source,
+            destination,
+            0.0,
+            "start",
+        )
+        finish = continuous_transition_target(
+            anchor,
+            source_start,
+            live_source,
+            destination,
+            1.0,
+            "finish",
+        )
+        midpoint = continuous_transition_target(
+            anchor,
+            source_start,
+            live_source,
+            destination,
+            0.5,
+            "midpoint",
+        )
+        frozen_midpoint = continuous_transition_target(
+            anchor,
+            source_start,
+            source_start,
+            destination,
+            0.5,
+            "frozen_midpoint",
+        )
+        for field in ("q", "kp", "kd", "feedforward", "effort"):
+            np.testing.assert_allclose(getattr(start, field), getattr(anchor, field))
+            np.testing.assert_allclose(
+                getattr(finish, field),
+                getattr(destination, field),
+            )
+        self.assertAlmostEqual(start.torque_scale, anchor.torque_scale)
+        self.assertAlmostEqual(finish.torque_scale, destination.torque_scale)
+        self.assertGreater(
+            float(np.max(np.abs(midpoint.q - frozen_midpoint.q))),
+            0.0,
+        )
+
     def test_default_entry_mode_is_continuous_full_body(self) -> None:
         self.assertEqual(
             self.config["controller"]["entry"]["mode"],
             "full_body_continuous",
+        )
+
+    def test_default_exit_modes_are_action_specific(self) -> None:
+        exit_config = self.config["controller"]["exit"]
+        self.assertEqual(exit_config["mode"], "continuous")
+        self.assertEqual(exit_config["handoff_target"], "neutral")
+        self.assertEqual(
+            self.config["motions"]["a"]["walkamp_reentry_history_mode"],
+            "measured",
+        )
+        self.assertEqual(
+            self.config["motions"]["b"]["walkamp_reentry_history_mode"],
+            "repeated",
         )
 
     def test_target_rate_limiter_respects_joint_groups(self) -> None:
@@ -207,7 +285,7 @@ class MultiEvt2Tests(unittest.TestCase):
         self.assertGreater(limiter.last_requested_maximum_delta, 9.0)
         self.assertAlmostEqual(limiter.last_applied_maximum_delta, 0.03)
 
-    def test_bow_only_has_an_early_exit_window(self) -> None:
+    def test_motion_specific_exit_settings(self) -> None:
         self.assertTrue(self.config["motions"]["a"]["exit_window"]["enabled"])
         self.assertAlmostEqual(
             self.config["motions"]["a"]["exit_window"]["seconds_before_end"],
@@ -215,13 +293,19 @@ class MultiEvt2Tests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             self.config["motions"]["a"]["walkamp_reentry_phase_time"],
-            0.2125,
+            0.31875,
         )
-        self.assertFalse(self.config["motions"]["b"]["exit_window"]["enabled"])
+        self.assertTrue(self.config["motions"]["b"]["exit_window"]["enabled"])
+        self.assertAlmostEqual(
+            self.config["motions"]["b"]["exit_window"]["seconds_before_end"],
+            0.8,
+        )
         self.assertEqual(
             self.config["motions"]["b"]["walkamp_reentry_phase_time"],
-            0.0,
+            0.31875,
         )
+        self.assertEqual(self.config["motions"]["a"]["transition_out_seconds"], 0.6)
+        self.assertEqual(self.config["motions"]["b"]["transition_out_seconds"], 0.6)
 
     def test_handoff_and_recovery_have_distinct_limits(self) -> None:
         import mujoco
@@ -293,6 +377,96 @@ class MultiEvt2Tests(unittest.TestCase):
         history = walkamp.history.reshape(10, 84)
         for frame in history[1:]:
             np.testing.assert_array_equal(frame, history[0])
+
+    def test_walkamp_preview_does_not_mutate_policy_or_simulation(self) -> None:
+        data, walkamp, _, _ = self.build_stack()
+        walkamp.record_measured_state(walkamp.neutral_target("executed"))
+        qpos = data.qpos.copy()
+        qvel = data.qvel.copy()
+        command = walkamp.command.copy()
+        last_actions = walkamp.last_actions.copy()
+        actions = walkamp.actions.copy()
+        history = walkamp.history.copy()
+        timer = walkamp.timer_gait
+        first_observation = walkamp.first_observation
+        last_observation = walkamp.last_observation.copy()
+        last_target = walkamp.last_target
+        measured_frames = [
+            (
+                frame.angular_velocity.copy(),
+                frame.projected_gravity.copy(),
+                frame.joint_position.copy(),
+                frame.joint_velocity.copy(),
+                frame.executed_action.copy(),
+            )
+            for frame in walkamp.measured_frames
+        ]
+
+        preview = walkamp.preview_from_live_state(
+            phase_time=0.2125,
+            history_mode="measured",
+            previous_target=walkamp.neutral_target("previous"),
+        )
+
+        self.assertEqual(preview.history.shape, (840,))
+        self.assertEqual(preview.action.shape, (23,))
+        self.assertTrue(np.all(np.isfinite(preview.history)))
+        self.assertTrue(np.all(np.isfinite(preview.action)))
+        np.testing.assert_array_equal(data.qpos, qpos)
+        np.testing.assert_array_equal(data.qvel, qvel)
+        np.testing.assert_array_equal(walkamp.command, command)
+        np.testing.assert_array_equal(walkamp.last_actions, last_actions)
+        np.testing.assert_array_equal(walkamp.actions, actions)
+        np.testing.assert_array_equal(walkamp.history, history)
+        self.assertEqual(walkamp.timer_gait, timer)
+        self.assertEqual(walkamp.first_observation, first_observation)
+        np.testing.assert_array_equal(walkamp.last_observation, last_observation)
+        self.assertIs(walkamp.last_target, last_target)
+        self.assertEqual(len(walkamp.measured_frames), len(measured_frames))
+        for frame, expected in zip(walkamp.measured_frames, measured_frames):
+            for actual, saved in zip(
+                (
+                    frame.angular_velocity,
+                    frame.projected_gravity,
+                    frame.joint_position,
+                    frame.joint_velocity,
+                    frame.executed_action,
+                ),
+                expected,
+            ):
+                np.testing.assert_array_equal(actual, saved)
+
+    def test_measured_history_uses_real_recorded_states(self) -> None:
+        import mujoco
+
+        data, walkamp, _, _ = self.build_stack()
+        first_target = walkamp.neutral_target("first_executed")
+        walkamp.record_measured_state(first_target)
+        joint = int(self.joint_map.qpos_adr[walkamp.policy_indices[0]])
+        velocity = int(self.joint_map.qvel_adr[walkamp.policy_indices[0]])
+        data.qpos[joint] += 0.03
+        data.qvel[velocity] = 0.2
+        mujoco.mj_forward(self.model, data)
+        second_target = walkamp.neutral_target("second_executed")
+        second_target.q[walkamp.policy_indices[0]] += 0.04
+        walkamp.record_measured_state(second_target)
+        qpos = data.qpos.copy()
+        qvel = data.qvel.copy()
+
+        result = walkamp.begin_from_live_state(
+            phase_time=0.2125,
+            history_mode="measured",
+            previous_target=second_target,
+        )
+        frames = walkamp.history.reshape(10, 84)
+
+        self.assertEqual(result["history_mode"], "measured")
+        self.assertEqual(result["measured_frames"], 2.0)
+        self.assertTrue(np.all(np.isfinite(walkamp.history)))
+        self.assertFalse(np.array_equal(frames[-2], frames[-1]))
+        self.assertAlmostEqual(float(frames[-1][9]), 0.03, places=6)
+        np.testing.assert_array_equal(data.qpos, qpos)
+        np.testing.assert_array_equal(data.qvel, qvel)
 
     def test_command_lifecycle_and_busy_rejection(self) -> None:
         _, _, _, controller = self.build_stack()

@@ -1,0 +1,120 @@
+{
+  "source": "scripts/run_smooth_exit_suite.py",
+  "branch": "feature/smooth-exit-phase3a3",
+  "selected": {
+    "exit_mode": "continuous",
+    "transition_out_seconds": 0.6,
+    "bow": {
+      "history_mode": "measured",
+      "phase_time": 0.31875,
+      "exit_window_seconds": 0.8
+    },
+    "wave": {
+      "history_mode": "repeated",
+      "phase_time": 0.31875,
+      "exit_window_seconds": 0.8
+    }
+  },
+  "single_run_comparison": {
+    "bow_legacy_repeated": {
+      "passed": true,
+      "boundary_q_jump": 0.0009941142,
+      "acquisition_xy_speed": 0.2656224252,
+      "acquisition_pitch_rate": 0.2613172629,
+      "acquisition_joint_speed": 5.5595081142,
+      "planar_displacement": 0.0696887462,
+      "acquisition_single_support": 1,
+      "recovery_step_events": 1,
+      "torque_saturation_rate": 0.0
+    },
+    "bow_continuous_measured": {
+      "passed": true,
+      "boundary_q_jump": 0.0,
+      "acquisition_xy_speed": 0.1432217860,
+      "acquisition_pitch_rate": 0.3900949616,
+      "acquisition_joint_speed": 1.5228353899,
+      "planar_displacement": 0.0525775654,
+      "acquisition_single_support": 0,
+      "recovery_step_events": 3,
+      "torque_saturation_rate": 0.0
+    },
+    "wave_legacy_repeated": {
+      "passed": true,
+      "boundary_q_jump": 0.0001430477,
+      "acquisition_xy_speed": 0.0979417440,
+      "acquisition_pitch_rate": 0.0750929898,
+      "acquisition_joint_speed": 0.2773153953,
+      "planar_displacement": 0.0288281013,
+      "acquisition_single_support": 0,
+      "recovery_step_events": 0,
+      "torque_saturation_rate": 0.0
+    },
+    "wave_continuous_repeated": {
+      "passed": true,
+      "boundary_q_jump": 0.0,
+      "acquisition_xy_speed": 0.0314421124,
+      "acquisition_pitch_rate": 0.0606676862,
+      "acquisition_joint_speed": 0.3077343920,
+      "planar_displacement": 0.0124600523,
+      "acquisition_single_support": 0,
+      "recovery_step_events": 0,
+      "torque_saturation_rate": 0.0
+    }
+  },
+  "continuous_state": {
+    "bow_repeat20": {
+      "passed": true,
+      "completed": 20,
+      "falls": 0,
+      "acquisition_single_support": 0,
+      "recovery_step_events": 64,
+      "mean_planar_displacement": 0.0452531531,
+      "minimum_root_z": 0.9450900162,
+      "torque_saturation_rate": 0.0
+    },
+    "wave_repeat20": {
+      "passed": true,
+      "completed": 20,
+      "falls": 0,
+      "acquisition_single_support": 0,
+      "recovery_step_events": 0,
+      "mean_planar_displacement": 0.0093856955,
+      "minimum_root_z": 0.9876640354,
+      "torque_saturation_rate": 0.0
+    },
+    "alternate_repeat20": {
+      "passed": true,
+      "completed": 20,
+      "falls": 0,
+      "acquisition_single_support": 0,
+      "recovery_step_events": 30,
+      "mean_planar_displacement": 0.0293410759,
+      "minimum_root_z": 0.9444253172,
+      "torque_saturation_rate": 0.0
+    }
+  },
+  "reference_tail": {
+    "bow": {
+      "handoff_step": 489,
+      "final_step": 555,
+      "maximum_joint_span": 0.0428302586,
+      "maximum_reference_joint_velocity": 0.2867877483,
+      "pelvis_position_span": [0.0100200186, 0.0069846809, 0.0003740191]
+    },
+    "wave": {
+      "handoff_step": 618,
+      "final_step": 684,
+      "maximum_joint_span": 0.0083659589,
+      "maximum_reference_joint_velocity": 0.0600770116,
+      "pelvis_position_span": [0.0014329073, 0.0020639300, 0.0000345707]
+    }
+  },
+  "failure_control": {
+    "name": "bow_preview_hard_gate",
+    "passed": false,
+    "completed": 0,
+    "reason": "preview target did not satisfy the neutral-tuned handoff gate continuously",
+    "minimum_root_z": 0.6537620946
+  },
+  "remaining_limit": "Bow recovery support-edge events were not eliminated; use a verified READY/Stand policy or trained recovery tail instead of extending interpolation indefinitely."
+}
