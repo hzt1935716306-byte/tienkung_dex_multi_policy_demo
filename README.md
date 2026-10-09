@@ -11,8 +11,9 @@
 | `configs/unified_experimental.json` | Dex EVT，29 DOF | 单窗口尝试同时加载行走和动作 | 不稳定，仅供诊断 |
 | `configs/walkamp_official.json` | 官方 xSIM EVT2，完整 29 关节 | 独立运行官方 WALKAMP 840→23 行走策略 | 四场景无头测试通过 |
 | `configs/motion_evt2.json` | 官方 xSIM EVT2，完整 29 关节 | 独立运行 BeyondMimic 104→19 鞠躬/摊手策略 | 两个真实策略完整轨迹通过 |
+| `configs/multi_evt2.json` | 官方 xSIM EVT2，完整 29 关节 | 同一窗口运行 WALKAMP，并按指令平滑切换鞠躬/摆手 | idle/bow/wave/abort 无头测试通过 |
 
-重要：三个 checkpoint 并不是在同一个 action space 上训练的。本项目在 19-DOF 动作模型上运行全部策略，行走策略多出的 4 个肩 roll/yaw 输出保留在观测历史中但不施加到固定关节，腰部在行走期间由 PD 保持。该适配已通过 MuJoCo 连续切换测试；实机部署前仍应按 [策略兼容说明](docs/POLICY_COMPATIBILITY.md) 做限幅和低增益测试。
+重要：旧 `configs/demo.json` 仍保留原来的 19-DOF 兼容方案。新的 `configs/multi_evt2.json` 使用官方完整 EVT2 模型，WALKAMP 输出 23 维、BeyondMimic 输出 19 维，两者先按关节名称映射为统一 29 关节物理目标后再交接。MuJoCo 验证通过不等于已完成实机安全认证。
 
 ## 官方 WALKAMP 第一阶段基线
 
@@ -52,6 +53,43 @@ python scripts/run_motion_evt2_headless_suite.py --config configs/motion_evt2.js
 
 动作入口固定使用训练名义 PD，不依赖 ONNX 导出时随机写入的环境增益。超出关节范围的策略期望角仍会被裁剪，但被裁掉的位置误差会转换为受力矩限幅约束的等效前馈，从而与 IsaacLab 隐式 PD 的控制语义一致。
 
+## Phase 3A 同窗口多策略
+
+启动官方 EVT2 多策略窗口：
+
+```bash
+python run_multi_evt2.py --config configs/multi_evt2.json
+```
+
+默认控制器始终是 WALKAMP。零速度不会自动进入动作策略；只有 `J`/`K` 或外部 `a`/`b` 指令会启动动作。按键如下：
+
+| 按键 | 功能 |
+| --- | --- |
+| `W` / `S` | 增加前进 / 后退速度 |
+| `A` / `D` | 增加左移 / 右移速度 |
+| `Q` / `E` | 增加左转 / 右转速度 |
+| `Space` | 行走速度清零 |
+| `J` | 鞠躬 |
+| `K` | 摆手 |
+| `R` | 在安全窗口中止动作并恢复 WALKAMP |
+| `Esc` | 退出 |
+
+从另一个终端通过保留的命令总线触发：
+
+```bash
+python scripts/send_command.py a --config configs/multi_evt2.json
+python scripts/send_command.py wave --config configs/multi_evt2.json
+python scripts/send_command.py r --config configs/multi_evt2.json
+```
+
+可重复无头测试：
+
+```bash
+python scripts/run_multi_evt2_headless_suite.py --config configs/multi_evt2.json
+```
+
+状态检查、live-state 初始化、五次多项式交接、限速和测试结果见 [Phase 3A 文档](docs/MULTI_POLICY_PHASE3A.md)。原有 `run_walkamp.py`、`run_motion_evt2.py`、`run_sim.py` 和 `configs/demo.json` 均保留。
+
 ## 目录结构
 
 ```text
@@ -65,6 +103,7 @@ python scripts/run_motion_evt2_headless_suite.py --config configs/motion_evt2.js
 ├── run_sim.py              # MuJoCo 主入口
 ├── run_walkamp.py          # 官方 WALKAMP 独立入口
 ├── run_motion_evt2.py      # 官方 EVT2 上的独立 BeyondMimic 动作入口
+├── run_multi_evt2.py       # 官方 EVT2 同窗口多策略入口
 └── setup.sh                # 安装脚本
 ```
 

@@ -354,6 +354,28 @@ class WalkAmpPolicy:
         self.first_observation = True
         self.last_target = None
 
+    def begin_from_live_state(
+        self,
+        command: np.ndarray | list[float] | tuple[float, float, float] = (0.0, 0.0, 0.0),
+        phase_time: float = 0.0,
+    ) -> None:
+        """Rebuild history and previous actions from the current robot state."""
+        self.set_command(command)
+        self.timer_gait = float(phase_time) % self.gait_cycle
+        current_q = self.data.qpos[self.joint_map.qpos_adr[self.policy_indices]]
+        seeded_actions = (current_q - self.default_angles) / self.action_scale
+        self.last_actions[:] = np.clip(
+            seeded_actions,
+            -self.clip_actions,
+            self.clip_actions,
+        ).astype(np.float32)
+        self.actions[:] = self.last_actions
+        observation = self._single_observation()
+        self.history[:] = np.tile(observation, self.history_length)
+        self.last_observation[:] = observation
+        self.first_observation = False
+        self.last_target = None
+
     def neutral_target(self, label: str = "walkamp_hold") -> ControlTarget:
         q = np.zeros(len(self.joint_map.names), dtype=np.float64)
         kp = np.zeros_like(q)

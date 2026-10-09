@@ -6,7 +6,14 @@ from typing import Any
 
 import numpy as np
 
-from .policies import MotionPolicy, quat_conjugate, quat_multiply, quat_normalize
+from .policies import (
+    MotionPolicy,
+    quat_conjugate,
+    quat_multiply,
+    quat_normalize,
+    yaw_from_quat,
+    yaw_quat,
+)
 from .robot import ControlTarget, JointMap
 
 
@@ -139,6 +146,9 @@ class MotionEvt2Policy(MotionPolicy):
         self.episode_initialized = False
         self.last_unclipped_target = self.hold_target.q.copy()
         self.last_target_clipped = np.zeros(len(joint_map.names), dtype=bool)
+        self.initialization_mode = "uninitialized"
+        self.live_start_count = 0
+        self.previous_action_clip = float(config.get("previous_action_clip", 100.0))
         self._validate_contract()
 
         controlled = set(self.joint_names)
@@ -233,6 +243,37 @@ class MotionEvt2Policy(MotionPolicy):
 
         self.last_action[:] = 0.0
         self.episode_initialized = True
+        self.initialization_mode = "reference_reset"
+
+    def begin_from_live_state(self) -> dict[str, Any]:
+        """Initialize policy history from the current robot without changing simulation state."""
+        reference = self._run(self.zero_observation, self.start_step)
+        reference_quat = quat_normalize(reference["body_quat_w"][0, self.anchor_motion_index])
+        robot_quat = quat_normalize(self.data.xquat[self.anchor_body_id].copy())
+        self.yaw_delta = yaw_quat(yaw_from_quat(robot_quat) - yaw_from_quat(reference_quat))
+
+        current_q = self.default_q.copy()
+        current_q[self.policy_indices] = self.data.qpos[
+            self.joint_map.qpos_adr[self.model_indices]
+        ]
+        previous_action = (current_q - self.default_q) / self.action_scale
+        self.last_action[:] = np.clip(
+            previous_action,
+            -self.previous_action_clip,
+            self.previous_action_clip,
+        )
+        self.episode_initialized = True
+        self.initialization_mode = "live_state"
+        self.live_start_count += 1
+
+        reference_q = reference["joint_pos"][0].astype(np.float64)
+        delta = reference_q - current_q
+        return {
+            "live_start_count": self.live_start_count,
+            "maximum_abs_joint_delta": float(np.max(np.abs(delta))),
+            "maximum_abs_previous_action": float(np.max(np.abs(self.last_action))),
+            "yaw_delta": float(yaw_from_quat(self.yaw_delta)),
+        }
 
     def _target_from_positions(self, policy_target: np.ndarray) -> ControlTarget:
         policy_target = np.asarray(policy_target, dtype=np.float64)
@@ -258,12 +299,24 @@ class MotionEvt2Policy(MotionPolicy):
 
     def first_target(self) -> ControlTarget:
         if not self.episode_initialized:
-            raise RuntimeError("Call reset_episode_to_reference() before requesting motion targets")
+            raise RuntimeError(
+                "Call reset_episode_to_reference() or begin_from_live_state() before requesting targets"
+            )
         return super().first_target()
+
+    def reference_start_target(self) -> ControlTarget:
+        if not self.episode_initialized:
+            raise RuntimeError(
+                "Call reset_episode_to_reference() or begin_from_live_state() before requesting targets"
+            )
+        reference = self._reference(0)
+        return self._target_from_positions(reference["joint_pos"][0].astype(np.float64))
 
     def step(self, policy_step: int) -> tuple[ControlTarget, np.ndarray, np.ndarray]:
         if not self.episode_initialized:
-            raise RuntimeError("Call reset_episode_to_reference() before stepping the motion")
+            raise RuntimeError(
+                "Call reset_episode_to_reference() or begin_from_live_state() before stepping the motion"
+            )
         target, observation, action = super().step(policy_step)
         if not (
             np.all(np.isfinite(target.q))
