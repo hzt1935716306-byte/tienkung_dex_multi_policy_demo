@@ -21,6 +21,9 @@ voice = [
   "pyaudio>=0.2.14",
   "websocket-client>=1.8",
 ]
+analysis = [
+  "matplotlib>=3.7,<4",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

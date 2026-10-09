@@ -102,6 +102,19 @@ python scripts/run_bow_recovery_suite.py --config configs/multi_evt2.json
 
 修复前基线可独立复现，详细诊断、结果和限制见 [Phase 3A.1 文档](docs/BOW_RECOVERY_PHASE3A1.md)。
 
+### Phase 3A.2 动作平滑切入
+
+`PRE_ALIGN` 到 `TRANSITION_IN` 现在以最后一份实际下发的 29 关节目标为连续起点，不再把插值权重归零后先退回 WALKAMP。关节位置、Kp、Kd、前馈、力矩限幅和 torque scale 在统一物理目标层一起平滑交接；默认参数为 `PRE_ALIGN=0.6 s`、`TRANSITION_IN=0.2 s`。
+
+专项测试包含旧逻辑、分组交接与全身连续交接对照、6 组时长组合、动作顺序组合，以及同一 MuJoCo 状态下连续 20 次鞠躬、20 次摆手和 20 次交替动作：
+
+```bash
+python -m pip install -e '.[analysis]'
+python scripts/run_smooth_entry_suite.py --config configs/multi_evt2.json
+```
+
+测试结果、关节角/力矩曲线和调参依据见 [Phase 3A.2 文档](docs/SMOOTH_ENTRY_PHASE3A2.md)。
+
 ## 目录结构
 
 ```text

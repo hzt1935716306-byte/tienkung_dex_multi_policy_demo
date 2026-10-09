@@ -41,10 +41,23 @@
   },
   "controller": {
     "transition_duration_candidates": [0.2, 0.3, 0.4, 0.6],
-    "transition_in_seconds": 0.4,
+    "transition_in_seconds": 0.2,
     "transition_out_seconds": 0.6,
     "walkamp_reentry_phase_time": 0.0,
     "walkamp_reentry_phase_candidates": [0.0, 0.2125, 0.425, 0.6375],
+    "entry": {
+      "mode": "full_body_continuous",
+      "pre_align_group_weights": {
+        "legs": 0.0,
+        "waist": 0.0,
+        "arms": 1.0
+      },
+      "transition_duration_scale": {
+        "legs": 1.0,
+        "waist": 1.0,
+        "arms": 1.0
+      }
+    },
     "ready_check": {
       "stable_seconds": 0.2,
       "timeout_seconds": 5.0,
@@ -227,6 +240,70 @@
           "delta_world_velocity": [0.04, 0.0],
           "delta_pitch_angular_velocity": 0.04
         }
+      ]
+    },
+    "wave_then_bow": {
+      "duration_seconds": 26.0,
+      "events": [
+        {"time": 2.0, "command": "b"},
+        {"time": 14.0, "command": "a"}
+      ]
+    },
+    "bow_then_wave": {
+      "duration_seconds": 26.0,
+      "events": [
+        {"time": 2.0, "command": "a"},
+        {"time": 13.0, "command": "b"}
+      ]
+    },
+    "wave_repeat20": {
+      "duration_seconds": 244.0,
+      "events": [
+        {"time": 2.0, "command": "b"},
+        {"time": 14.0, "command": "b"},
+        {"time": 26.0, "command": "b"},
+        {"time": 38.0, "command": "b"},
+        {"time": 50.0, "command": "b"},
+        {"time": 62.0, "command": "b"},
+        {"time": 74.0, "command": "b"},
+        {"time": 86.0, "command": "b"},
+        {"time": 98.0, "command": "b"},
+        {"time": 110.0, "command": "b"},
+        {"time": 122.0, "command": "b"},
+        {"time": 134.0, "command": "b"},
+        {"time": 146.0, "command": "b"},
+        {"time": 158.0, "command": "b"},
+        {"time": 170.0, "command": "b"},
+        {"time": 182.0, "command": "b"},
+        {"time": 194.0, "command": "b"},
+        {"time": 206.0, "command": "b"},
+        {"time": 218.0, "command": "b"},
+        {"time": 230.0, "command": "b"}
+      ]
+    },
+    "alternate_repeat20": {
+      "duration_seconds": 244.0,
+      "events": [
+        {"time": 2.0, "command": "a"},
+        {"time": 14.0, "command": "b"},
+        {"time": 26.0, "command": "a"},
+        {"time": 38.0, "command": "b"},
+        {"time": 50.0, "command": "a"},
+        {"time": 62.0, "command": "b"},
+        {"time": 74.0, "command": "a"},
+        {"time": 86.0, "command": "b"},
+        {"time": 98.0, "command": "a"},
+        {"time": 110.0, "command": "b"},
+        {"time": 122.0, "command": "a"},
+        {"time": 134.0, "command": "b"},
+        {"time": 146.0, "command": "a"},
+        {"time": 158.0, "command": "b"},
+        {"time": 170.0, "command": "a"},
+        {"time": 182.0, "command": "b"},
+        {"time": 194.0, "command": "a"},
+        {"time": 206.0, "command": "b"},
+        {"time": 218.0, "command": "a"},
+        {"time": 230.0, "command": "b"}
       ]
     }
   },

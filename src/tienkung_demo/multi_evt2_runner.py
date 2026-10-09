@@ -15,7 +15,7 @@ from .motion_evt2 import MotionEvt2Policy
 from .motion_evt2_runner import FootContactMonitor
 from .multi_evt2_controller import CommandStatus, ControllerState, MultiEvt2Controller
 from .robot import build_joint_map
-from .transition_controller import ConstrainedPDController
+from .transition_controller import ConstrainedPDController, copy_target
 from .walkamp import WalkAmpPolicy, load_walkamp_config
 from .walkamp_runner import CsvStateLogger, quaternion_to_rpy, setup_initial_pose
 
@@ -32,7 +32,58 @@ EXTRA_LOG_COLUMNS = [
     "maximum_torque_rate",
     "torque_saturation_fraction",
     "torque_slew_limited_fraction",
+    "alpha_legs",
+    "alpha_waist",
+    "alpha_arms",
 ]
+
+
+def entry_joint_log_columns(joint_names: list[str]) -> list[str]:
+    columns: list[str] = []
+    for name in joint_names:
+        columns.extend(
+            [
+                f"{name}.raw_target",
+                f"{name}.raw_kp",
+                f"{name}.raw_kd",
+                f"{name}.raw_feedforward",
+                f"{name}.target_kp",
+                f"{name}.target_kd",
+                f"{name}.target_feedforward",
+            ]
+        )
+    return columns
+
+
+def empty_entry_metrics() -> dict[str, Any]:
+    def stage() -> dict[str, Any]:
+        return {
+            "samples": 0,
+            "maximum_abs_roll_pitch": 0.0,
+            "maximum_xy_speed": 0.0,
+            "maximum_angular_speed": 0.0,
+            "maximum_torque_rate": 0.0,
+            "groups": {
+                group: {
+                    "maximum_raw_target_delta": 0.0,
+                    "maximum_applied_target_delta": 0.0,
+                    "maximum_kp_delta": 0.0,
+                    "maximum_kd_delta": 0.0,
+                    "maximum_feedforward_delta": 0.0,
+                    "maximum_tracking_error": 0.0,
+                    "maximum_joint_speed": 0.0,
+                    "maximum_abs_torque": 0.0,
+                    "maximum_torque_delta": 0.0,
+                }
+                for group in ("legs", "waist", "arms")
+            },
+        }
+
+    return {
+        "PRE_ALIGN": stage(),
+        "TRANSITION_IN": stage(),
+        "boundary": {},
+    }
 
 
 def _resolve_path(value: str, config_dir: Path) -> str:
@@ -149,6 +200,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--command-file", default="")
     parser.add_argument("--transition-in", type=float, default=None)
     parser.add_argument("--transition-out", type=float, default=None)
+    parser.add_argument(
+        "--entry-mode",
+        choices=("grouped", "full_body_continuous", "legacy"),
+        default=None,
+    )
+    parser.add_argument("--pre-align", type=float, default=None)
     parser.add_argument("--reentry-phase", type=float, default=None)
     parser.add_argument("--log", default="")
     parser.add_argument("--summary", default="")
@@ -180,31 +237,32 @@ def validate_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[st
             event["state"] == ControllerState.WALKAMP_IDLE.value
             for event in summary["controller"]["state_history"]
         )
-    elif scenario == "wave" or scenario.startswith("bow"):
-        action_key = "b" if scenario == "wave" else "a"
-        expected = sum(
-            str(event.get("command", "")).lower() in (
-                action_key,
-                "wave" if action_key == "b" else "bow",
-            )
-            for event in config["scenarios"][scenario].get("events", [])
-        )
-        checks["action_completed"] = any(
-            record["status"] == CommandStatus.COMPLETED.value
-            and record["action_key"] == action_key
-            for record in commands
-        )
-        checks["all_actions_completed"] = sum(
-            record["status"] == CommandStatus.COMPLETED.value
-            and record["action_key"] == action_key
-            for record in commands
-        ) == expected
-        checks["returned_to_walkamp"] = (
-            summary["controller"]["state"] == ControllerState.WALKAMP_IDLE.value
-        )
     elif scenario == "abort":
         checks["abort_completed"] = any(
             record["command"] == "r" and record["status"] == CommandStatus.COMPLETED.value
+            for record in commands
+        )
+        checks["returned_to_walkamp"] = (
+            summary["controller"]["state"] == ControllerState.WALKAMP_IDLE.value
+        )
+    elif scenario != "manual":
+        aliases = {"a": "a", "bow": "a", "b": "b", "wave": "b"}
+        expected_actions = [
+            aliases[str(event.get("command", "")).lower()]
+            for event in config["scenarios"][scenario].get("events", [])
+            if str(event.get("command", "")).lower() in aliases
+        ]
+        completed_actions = [
+            record["action_key"]
+            for record in commands
+            if record["status"] == CommandStatus.COMPLETED.value
+            and record["action_key"] in ("a", "b")
+        ]
+        checks["all_actions_completed"] = completed_actions == expected_actions
+        checks["no_action_failed_or_rejected"] = not any(
+            record["action_key"] in ("a", "b")
+            and record["status"]
+            in (CommandStatus.FAILED.value, CommandStatus.REJECTED.value)
             for record in commands
         )
         checks["returned_to_walkamp"] = (
@@ -223,6 +281,10 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         raise ValueError(f"Unknown scenario {args.scenario!r}")
     if args.transition_in is not None:
         config["controller"]["transition_in_seconds"] = args.transition_in
+    if args.pre_align is not None:
+        config["controller"]["pre_align"]["duration_seconds"] = args.pre_align
+    if args.entry_mode is not None:
+        config["controller"]["entry"]["mode"] = args.entry_mode
     if args.transition_out is not None:
         config["controller"]["transition_out_seconds"] = args.transition_out
     if args.reentry_phase is not None:
@@ -339,7 +401,11 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
     logger = (
         None
         if args.no_log
-        else CsvStateLogger(log_path, joint_map.names, extra_columns=EXTRA_LOG_COLUMNS)
+        else CsvStateLogger(
+            log_path,
+            joint_map.names,
+            extra_columns=EXTRA_LOG_COLUMNS + entry_joint_log_columns(joint_map.names),
+        )
     )
     debug_interval = (
         int(sim.get("debug_interval", 25))
@@ -364,6 +430,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
     transition_out_maximum_abs_torque = 0.0
     transition_out_saturation_sum = 0.0
     transition_out_samples = 0
+    entry_metrics = empty_entry_metrics()
     finite = True
     executed_steps = 0
 
@@ -394,7 +461,11 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
 
         contacts = contact_monitor.measure(data)
         state_before_control = controller.state
+        state_step_before_control = controller.state_step
+        previous_target = copy_target(controller.last_target, "previous_applied")
+        previous_torque = pd.previous_torque.copy()
         output = controller.step(contacts)
+        raw_target = controller.last_raw_target
         torque_result = None
         for _ in range(substeps):
             torque_result = pd.apply(data, output.target)
@@ -425,6 +496,126 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         maximum_abs_torque = max(maximum_abs_torque, float(np.max(np.abs(torque_result.torque))))
         saturation_sum += torque_result.saturation_fraction
         torque_samples += 1
+        if state_before_control.value in ("PRE_ALIGN", "TRANSITION_IN"):
+            stage = entry_metrics[state_before_control.value]
+            stage["samples"] += 1
+            stage["maximum_abs_roll_pitch"] = max(
+                stage["maximum_abs_roll_pitch"],
+                abs(float(rpy[0])),
+                abs(float(rpy[1])),
+            )
+            stage["maximum_xy_speed"] = max(
+                stage["maximum_xy_speed"],
+                float(np.linalg.norm(data.qvel[0:2])),
+            )
+            stage["maximum_angular_speed"] = max(
+                stage["maximum_angular_speed"],
+                float(np.linalg.norm(data.sensor("angular-velocity").data.copy())),
+            )
+            stage["maximum_torque_rate"] = max(
+                stage["maximum_torque_rate"],
+                torque_result.maximum_rate,
+            )
+            actual_q = data.qpos[joint_map.qpos_adr]
+            actual_qd = data.qvel[joint_map.qvel_adr]
+            for group, indices in controller.group_indices.items():
+                values = stage["groups"][group]
+                values["maximum_raw_target_delta"] = max(
+                    values["maximum_raw_target_delta"],
+                    float(np.max(np.abs(raw_target.q[indices] - previous_target.q[indices]))),
+                )
+                values["maximum_applied_target_delta"] = max(
+                    values["maximum_applied_target_delta"],
+                    float(np.max(np.abs(output.target.q[indices] - previous_target.q[indices]))),
+                )
+                for field, metric in (
+                    ("kp", "maximum_kp_delta"),
+                    ("kd", "maximum_kd_delta"),
+                    ("feedforward", "maximum_feedforward_delta"),
+                ):
+                    values[metric] = max(
+                        values[metric],
+                        float(
+                            np.max(
+                                np.abs(
+                                    getattr(raw_target, field)[indices]
+                                    - getattr(previous_target, field)[indices]
+                                )
+                            )
+                        ),
+                    )
+                values["maximum_tracking_error"] = max(
+                    values["maximum_tracking_error"],
+                    float(np.max(np.abs(output.target.q[indices] - actual_q[indices]))),
+                )
+                values["maximum_joint_speed"] = max(
+                    values["maximum_joint_speed"],
+                    float(np.max(np.abs(actual_qd[indices]))),
+                )
+                values["maximum_abs_torque"] = max(
+                    values["maximum_abs_torque"],
+                    float(np.max(np.abs(torque_result.torque[indices]))),
+                )
+                values["maximum_torque_delta"] = max(
+                    values["maximum_torque_delta"],
+                    float(
+                        np.max(
+                            np.abs(
+                                torque_result.torque[indices]
+                                - previous_torque[indices]
+                            )
+                        )
+                    ),
+                )
+            if (
+                state_before_control == ControllerState.TRANSITION_IN
+                and state_step_before_control == 0
+            ):
+                entry_metrics["boundary"] = {
+                    group: {
+                        "raw_target_delta": float(
+                            np.max(
+                                np.abs(
+                                    raw_target.q[indices]
+                                    - previous_target.q[indices]
+                                )
+                            )
+                        ),
+                        "applied_target_delta": float(
+                            np.max(
+                                np.abs(
+                                    output.target.q[indices]
+                                    - previous_target.q[indices]
+                                )
+                            )
+                        ),
+                        "kp_delta": float(
+                            np.max(
+                                np.abs(
+                                    raw_target.kp[indices]
+                                    - previous_target.kp[indices]
+                                )
+                            )
+                        ),
+                        "kd_delta": float(
+                            np.max(
+                                np.abs(
+                                    raw_target.kd[indices]
+                                    - previous_target.kd[indices]
+                                )
+                            )
+                        ),
+                        "feedforward_delta": float(
+                            np.max(
+                                np.abs(
+                                    raw_target.feedforward[indices]
+                                    - previous_target.feedforward[indices]
+                                )
+                            )
+                        ),
+                    }
+                    for group, indices in controller.group_indices.items()
+                }
         if state_before_control == ControllerState.TRANSITION_OUT:
             transition_out_maximum_target_rate = max(
                 transition_out_maximum_target_rate,
@@ -456,11 +647,28 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         )
 
         if logger is not None:
+            entry_values: dict[str, float] = {
+                "alpha_legs": controller.entry_group_alphas["legs"],
+                "alpha_waist": controller.entry_group_alphas["waist"],
+                "alpha_arms": controller.entry_group_alphas["arms"],
+            }
+            for index, name in enumerate(joint_map.names):
+                entry_values.update(
+                    {
+                        f"{name}.raw_target": raw_target.q[index],
+                        f"{name}.raw_kp": raw_target.kp[index],
+                        f"{name}.raw_kd": raw_target.kd[index],
+                        f"{name}.raw_feedforward": raw_target.feedforward[index],
+                        f"{name}.target_kp": output.target.kp[index],
+                        f"{name}.target_kd": output.target.kd[index],
+                        f"{name}.target_feedforward": output.target.feedforward[index],
+                    }
+                )
             logger.write(
                 step,
                 data,
                 joint_map,
-                controller.state.value,
+                state_before_control.value,
                 walkamp.command,
                 output.target,
                 torque_result.torque,
@@ -477,6 +685,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
                     "maximum_torque_rate": torque_result.maximum_rate,
                     "torque_saturation_fraction": torque_result.saturation_fraction,
                     "torque_slew_limited_fraction": torque_result.slew_limited_fraction,
+                    **entry_values,
                 },
             )
         if debug_interval > 0 and step % debug_interval == 0:
@@ -529,6 +738,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
 
     summary: dict[str, Any] = {
         "scenario": args.scenario,
+        "control_dt": control_dt,
         "finite": finite,
         "executed_steps": executed_steps,
         "expected_steps": max_steps,
@@ -554,6 +764,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
                 transition_out_saturation_sum / max(transition_out_samples, 1)
             ),
         },
+        "entry_metrics": entry_metrics,
         "final_command": walkamp.command.tolist(),
         "final_root_x": float(data.qpos[0]),
         "final_root_y": float(data.qpos[1]),

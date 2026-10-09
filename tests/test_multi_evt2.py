@@ -23,6 +23,10 @@ from tienkung_demo.robot import build_joint_map
 from tienkung_demo.transition_controller import (
     TargetRateLimiter,
     blend_targets,
+    continuous_group_transition_target,
+    endpoint_progress,
+    joint_group_indices,
+    prealign_group_target,
     quintic_alpha,
 )
 from tienkung_demo.walkamp import WalkAmpPolicy, load_walkamp_config
@@ -91,6 +95,8 @@ class MultiEvt2Tests(unittest.TestCase):
         epsilon = 1.0e-5
         self.assertAlmostEqual(quintic_alpha(epsilon) / epsilon, 0.0, places=7)
         self.assertAlmostEqual((1.0 - quintic_alpha(1.0 - epsilon)) / epsilon, 0.0, places=7)
+        self.assertEqual(endpoint_progress(0, 40), 0.0)
+        self.assertEqual(endpoint_progress(39, 40), 1.0)
 
     def test_blend_operates_on_complete_29_joint_targets(self) -> None:
         _, walkamp, _, _ = self.build_stack()
@@ -111,6 +117,73 @@ class MultiEvt2Tests(unittest.TestCase):
         np.testing.assert_allclose(midpoint.feedforward, 0.5)
         np.testing.assert_allclose(midpoint.effort, 0.5 * (first.effort + second.effort))
         self.assertAlmostEqual(midpoint.torque_scale, 0.8)
+
+    def test_grouped_prealign_only_moves_configured_joint_groups(self) -> None:
+        _, walkamp, _, _ = self.build_stack()
+        balance = walkamp.neutral_target("balance")
+        motion = walkamp.neutral_target("motion")
+        motion.q += 0.25
+        motion.kp += 25.0
+        motion.kd += 2.5
+        motion.feedforward += 3.0
+        target = prealign_group_target(
+            balance,
+            motion,
+            {"legs": 0.0, "waist": 0.0, "arms": 1.0},
+            self.joint_map,
+        )
+        groups = joint_group_indices(self.joint_map)
+        np.testing.assert_allclose(target.q[groups["legs"]], balance.q[groups["legs"]])
+        np.testing.assert_allclose(target.q[groups["waist"]], balance.q[groups["waist"]])
+        np.testing.assert_allclose(target.q[groups["arms"]], motion.q[groups["arms"]])
+        np.testing.assert_array_equal(target.kp, balance.kp)
+        np.testing.assert_array_equal(target.kd, balance.kd)
+        np.testing.assert_array_equal(target.feedforward, balance.feedforward)
+
+    def test_continuous_entry_has_exact_complete_target_endpoints(self) -> None:
+        _, walkamp, _, _ = self.build_stack()
+        anchor = walkamp.neutral_target("anchor")
+        balance_start = walkamp.neutral_target("balance_start")
+        balance = walkamp.neutral_target("balance")
+        motion = walkamp.neutral_target("motion")
+        for index, field in enumerate(("q", "kp", "kd", "feedforward", "effort"), 1):
+            getattr(anchor, field)[:] += 0.1 * index
+            getattr(balance, field)[:] -= 0.2 * index
+            getattr(motion, field)[:] += 0.3 * index
+        anchor.torque_scale = 0.7
+        balance_start.torque_scale = 0.8
+        balance.torque_scale = 0.9
+        motion.torque_scale = 1.0
+
+        start = continuous_group_transition_target(
+            anchor,
+            balance_start,
+            balance,
+            motion,
+            {"legs": 0.0, "waist": 0.0, "arms": 0.0},
+            self.joint_map,
+            anchored_groups={"legs", "waist", "arms"},
+        )
+        finish = continuous_group_transition_target(
+            anchor,
+            balance_start,
+            balance,
+            motion,
+            {"legs": 1.0, "waist": 1.0, "arms": 1.0},
+            self.joint_map,
+            anchored_groups={"legs", "waist", "arms"},
+        )
+        for field in ("q", "kp", "kd", "feedforward", "effort"):
+            np.testing.assert_allclose(getattr(start, field), getattr(anchor, field))
+            np.testing.assert_allclose(getattr(finish, field), getattr(motion, field))
+        self.assertAlmostEqual(start.torque_scale, anchor.torque_scale)
+        self.assertAlmostEqual(finish.torque_scale, motion.torque_scale)
+
+    def test_default_entry_mode_is_continuous_full_body(self) -> None:
+        self.assertEqual(
+            self.config["controller"]["entry"]["mode"],
+            "full_body_continuous",
+        )
 
     def test_target_rate_limiter_respects_joint_groups(self) -> None:
         _, walkamp, _, _ = self.build_stack()

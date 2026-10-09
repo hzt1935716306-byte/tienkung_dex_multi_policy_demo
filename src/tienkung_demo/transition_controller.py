@@ -44,6 +44,142 @@ def blend_targets(
     )
 
 
+def endpoint_progress(step: int, duration_steps: int) -> float:
+    """Return a stage progress with exact zero and one endpoints."""
+    if duration_steps <= 1:
+        return 1.0
+    return float(np.clip(step / (duration_steps - 1), 0.0, 1.0))
+
+
+def joint_group_indices(joint_map: JointMap) -> dict[str, np.ndarray]:
+    groups: dict[str, list[int]] = {"legs": [], "waist": [], "arms": []}
+    for index, name in enumerate(joint_map.names):
+        if any(token in name for token in ("hip_", "knee_", "ankle_")):
+            groups["legs"].append(index)
+        elif name.startswith("waist_"):
+            groups["waist"].append(index)
+        else:
+            groups["arms"].append(index)
+    return {
+        name: np.asarray(indices, dtype=np.int32)
+        for name, indices in groups.items()
+    }
+
+
+def joint_group_weights(
+    joint_map: JointMap,
+    group_weights: dict[str, float],
+) -> np.ndarray:
+    unknown = set(group_weights) - {"legs", "waist", "arms"}
+    if unknown:
+        raise ValueError(f"Unknown joint groups: {sorted(unknown)}")
+    if set(group_weights) != {"legs", "waist", "arms"}:
+        raise ValueError("Joint group weights must define legs, waist, and arms")
+    groups = joint_group_indices(joint_map)
+    weights = np.zeros(len(joint_map.names), dtype=np.float64)
+    for group, indices in groups.items():
+        value = float(group_weights[group])
+        if not 0.0 <= value <= 1.0:
+            raise ValueError(f"Joint group weight {group}={value} is outside [0, 1]")
+        weights[indices] = value
+    return weights
+
+
+def blend_targets_with_joint_weights(
+    first: ControlTarget,
+    second: ControlTarget,
+    weights: np.ndarray,
+    label: str,
+) -> ControlTarget:
+    """Blend complete physical targets with one interpolation weight per joint."""
+    weights = np.asarray(weights, dtype=np.float64)
+    if weights.shape != first.q.shape or weights.shape != second.q.shape:
+        raise ValueError("Joint weights must match both control targets")
+    if np.any(weights < 0.0) or np.any(weights > 1.0):
+        raise ValueError("Joint weights must stay inside [0, 1]")
+    inverse = 1.0 - weights
+    scalar_weight = float(np.mean(weights))
+    return ControlTarget(
+        q=inverse * first.q + weights * second.q,
+        kp=inverse * first.kp + weights * second.kp,
+        kd=inverse * first.kd + weights * second.kd,
+        feedforward=inverse * first.feedforward + weights * second.feedforward,
+        effort=inverse * first.effort + weights * second.effort,
+        torque_scale=(
+            (1.0 - scalar_weight) * first.torque_scale
+            + scalar_weight * second.torque_scale
+        ),
+        label=label,
+    )
+
+
+def prealign_group_target(
+    balance_target: ControlTarget,
+    motion_target: ControlTarget,
+    group_alphas: dict[str, float],
+    joint_map: JointMap,
+) -> ControlTarget:
+    """Pre-align selected joint positions while retaining balance-controller gains."""
+    target = copy_target(balance_target, "pre_align_grouped")
+    weights = joint_group_weights(joint_map, group_alphas)
+    target.q = (1.0 - weights) * balance_target.q + weights * motion_target.q
+    return target
+
+
+def continuous_group_transition_target(
+    anchor_target: ControlTarget,
+    balance_start: ControlTarget,
+    balance_target: ControlTarget,
+    motion_target: ControlTarget,
+    group_alphas: dict[str, float],
+    joint_map: JointMap,
+    anchored_groups: set[str] | None = None,
+) -> ControlTarget:
+    """Blend from the last applied target without resetting to a policy endpoint.
+
+    Non-anchored groups retain live balance-policy changes. Their initial source
+    offset is decayed with progress so the first sample is exactly the anchor.
+    Anchored groups use the anchor directly, which prevents already pre-aligned
+    joints from following the balance policy backwards.
+    """
+    anchored_groups = set(anchored_groups or ())
+    unknown = anchored_groups - {"legs", "waist", "arms"}
+    if unknown:
+        raise ValueError(f"Unknown anchored joint groups: {sorted(unknown)}")
+    weights = joint_group_weights(joint_map, group_alphas)
+    source = copy_target(balance_target, "continuous_entry_source")
+    groups = joint_group_indices(joint_map)
+    vector_fields = ("q", "kp", "kd", "feedforward", "effort")
+    for group, indices in groups.items():
+        alpha = float(group_alphas[group])
+        if group in anchored_groups:
+            for field in vector_fields:
+                getattr(source, field)[indices] = getattr(anchor_target, field)[indices]
+        else:
+            correction = 1.0 - alpha
+            for field in vector_fields:
+                current = getattr(source, field)
+                current[indices] += correction * (
+                    getattr(anchor_target, field)[indices]
+                    - getattr(balance_start, field)[indices]
+                )
+
+    scalar_alpha = float(np.mean(weights))
+    source.torque_scale = (
+        anchor_target.torque_scale
+        if anchored_groups
+        else balance_target.torque_scale
+        + (1.0 - scalar_alpha)
+        * (anchor_target.torque_scale - balance_start.torque_scale)
+    )
+    return blend_targets_with_joint_weights(
+        source,
+        motion_target,
+        weights,
+        "transition_in_continuous",
+    )
+
+
 def prealign_target(
     balance_target: ControlTarget,
     motion_target: ControlTarget,

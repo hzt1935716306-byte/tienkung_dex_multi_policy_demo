@@ -12,7 +12,13 @@ from .robot import ControlTarget, JointMap
 from .transition_controller import (
     TargetRateLimiter,
     blend_targets,
+    continuous_group_transition_target,
+    copy_target,
+    endpoint_progress,
+    joint_group_indices,
+    prealign_group_target,
     prealign_target,
+    quintic_alpha,
 )
 from .walkamp import WalkAmpPolicy
 from .walkamp_runner import quaternion_to_rpy
@@ -111,6 +117,13 @@ class MultiEvt2Controller:
         self.last_handoff: dict[str, Any] = {}
         self.last_recovery: dict[str, Any] = {}
         self.last_contacts: dict[str, float] = {}
+        entry_config = config.get("entry", {})
+        self.entry_mode = str(entry_config.get("mode", "full_body_continuous"))
+        if self.entry_mode not in ("grouped", "full_body_continuous", "legacy"):
+            raise ValueError(f"Unknown entry mode {self.entry_mode!r}")
+        self.entry_anchor_target: ControlTarget | None = None
+        self.entry_balance_start: ControlTarget | None = None
+        self.entry_group_alphas = {"legs": 0.0, "waist": 0.0, "arms": 0.0}
         self.event_history: list[dict[str, Any]] = []
         self.state_history: list[dict[str, Any]] = [
             {"step": 0, "state": self.state.value, "reason": "startup"}
@@ -126,32 +139,9 @@ class MultiEvt2Controller:
         self.target_limiter.reset(current_q)
         self.walkamp.begin_from_live_state((0.0, 0.0, 0.0))
         self.last_target = self.walkamp.neutral_target("walkamp_idle_start")
+        self.last_raw_target = copy_target(self.last_target, "raw_start")
 
-        self.group_indices = {
-            "legs": np.asarray(
-                [
-                    index
-                    for index, name in enumerate(joint_map.names)
-                    if any(token in name for token in ("hip_", "knee_", "ankle_"))
-                ],
-                dtype=np.int32,
-            ),
-            "waist": np.asarray(
-                [index for index, name in enumerate(joint_map.names) if name.startswith("waist_")],
-                dtype=np.int32,
-            ),
-            "arms": np.asarray(
-                [
-                    index
-                    for index, name in enumerate(joint_map.names)
-                    if not any(
-                        token in name
-                        for token in ("hip_", "knee_", "ankle_", "waist_")
-                    )
-                ],
-                dtype=np.int32,
-            ),
-        }
+        self.group_indices = joint_group_indices(joint_map)
 
     @property
     def busy(self) -> bool:
@@ -239,6 +229,9 @@ class MultiEvt2Controller:
         self.handoff_stable_steps = 0
         self.exit_window_opened = False
         self.terminal_failure_reason = ""
+        self.entry_anchor_target = None
+        self.entry_balance_start = None
+        self.entry_group_alphas = {"legs": 0.0, "waist": 0.0, "arms": 0.0}
         self._update_record(record, CommandStatus.ACCEPTED)
         self._set_state(ControllerState.READY_CHECK, f"accepted:{action_key}")
         return record
@@ -432,6 +425,60 @@ class MultiEvt2Controller:
             for group, indices in self.group_indices.items()
         }
 
+    def _entry_alphas(self, progress: float, stage: str) -> dict[str, float]:
+        settings = self.config.get("entry", {})
+        if stage == "pre_align":
+            if self.entry_mode == "grouped":
+                enabled = settings.get(
+                    "pre_align_group_weights",
+                    {"legs": 0.0, "waist": 0.0, "arms": 1.0},
+                )
+            else:
+                enabled = {"legs": 1.0, "waist": 1.0, "arms": 1.0}
+            alpha = quintic_alpha(progress)
+            return {
+                group: alpha * float(enabled[group])
+                for group in ("legs", "waist", "arms")
+            }
+        if stage != "transition_in":
+            raise ValueError(f"Unknown entry stage {stage!r}")
+        scales = settings.get(
+            "transition_duration_scale",
+            {"legs": 1.0, "waist": 1.0, "arms": 1.0},
+        )
+        alphas: dict[str, float] = {}
+        for group in ("legs", "waist", "arms"):
+            scale = float(scales[group])
+            if not 0.0 < scale <= 1.0:
+                raise ValueError(
+                    "Entry transition duration scales must be inside (0, 1]"
+                )
+            alphas[group] = quintic_alpha(min(progress / scale, 1.0))
+        return alphas
+
+    def _target_group_deltas(
+        self,
+        target: ControlTarget,
+        reference: ControlTarget,
+    ) -> dict[str, dict[str, float]]:
+        values: dict[str, dict[str, float]] = {}
+        for group, indices in self.group_indices.items():
+            values[group] = {
+                field: float(
+                    np.max(
+                        np.abs(
+                            getattr(target, field)[indices]
+                            - getattr(reference, field)[indices]
+                        )
+                    )
+                )
+                for field in ("q", "kp", "kd", "feedforward", "effort")
+            }
+        values["scalar"] = {
+            "torque_scale": abs(target.torque_scale - reference.torque_scale)
+        }
+        return values
+
     def _emergency_reasons(self) -> list[str]:
         limits = self.config["emergency"]
         rpy = quaternion_to_rpy(self.data.sensor("orientation").data.copy())
@@ -551,6 +598,9 @@ class MultiEvt2Controller:
         self.handoff_stable_steps = 0
         self.exit_window_opened = False
         self.recover_stable_steps = 0
+        self.entry_anchor_target = None
+        self.entry_balance_start = None
+        self.entry_group_alphas = {"legs": 0.0, "waist": 0.0, "arms": 0.0}
         self._set_state(ControllerState.WALKAMP_IDLE, "recovery_complete")
 
     def fail(self, reason: str) -> None:
@@ -592,18 +642,45 @@ class MultiEvt2Controller:
         motion_target, observation, action = self.active_motion.step(0)
         settings = self.config["pre_align"]
         duration = self._duration_steps(settings["duration_seconds"])
-        progress = min((self.state_step + 1) / duration, 1.0)
-        target = prealign_target(walk_target, motion_target, progress)
+        if self.entry_mode == "legacy":
+            progress = min((self.state_step + 1) / duration, 1.0)
+            target = prealign_target(walk_target, motion_target, progress)
+            alpha = quintic_alpha(progress)
+            self.entry_group_alphas = {
+                "legs": alpha,
+                "waist": alpha,
+                "arms": alpha,
+            }
+        else:
+            progress = endpoint_progress(self.state_step, duration)
+            self.entry_group_alphas = self._entry_alphas(progress, "pre_align")
+            target = prealign_group_target(
+                walk_target,
+                motion_target,
+                self.entry_group_alphas,
+                self.joint_map,
+            )
         self.state_step += 1
 
         if progress >= 1.0:
             safe, reasons, _ = self._check_state(contacts, settings["handoff_limits"])
             errors = self._tracking_errors(motion_target)
             tracking_limits = settings["maximum_tracking_error"]
+            checked_groups = (
+                set(errors)
+                if self.entry_mode != "grouped"
+                else {
+                    group
+                    for group, weight in self.config["entry"][
+                        "pre_align_group_weights"
+                    ].items()
+                    if float(weight) > 0.0
+                }
+            )
             tracking_reasons = [
                 f"{group}_tracking={value:.3f}>{float(tracking_limits[group]):.3f}"
                 for group, value in errors.items()
-                if value > float(tracking_limits[group])
+                if group in checked_groups and value > float(tracking_limits[group])
             ]
             if safe and not tracking_reasons:
                 self._set_state(ControllerState.TRANSITION_IN, "pre_align_complete")
@@ -616,11 +693,63 @@ class MultiEvt2Controller:
         walk_target, _, _ = self.walkamp.step()
         motion_target, observation, action = self.active_motion.step(0)
         duration = self._duration_steps(self.config["transition_in_seconds"])
-        progress = min((self.state_step + 1) / duration, 1.0)
-        target = blend_targets(walk_target, motion_target, progress, "transition_in")
+        if self.entry_mode == "legacy":
+            progress = min((self.state_step + 1) / duration, 1.0)
+            alpha = quintic_alpha(progress)
+            self.entry_group_alphas = {
+                "legs": alpha,
+                "waist": alpha,
+                "arms": alpha,
+            }
+            target = blend_targets(walk_target, motion_target, progress, "transition_in")
+        else:
+            progress = endpoint_progress(self.state_step, duration)
+            if self.entry_anchor_target is None:
+                self.entry_anchor_target = copy_target(
+                    self.last_target,
+                    "entry_anchor_applied",
+                )
+                self.entry_balance_start = copy_target(
+                    walk_target,
+                    "entry_balance_start",
+                )
+            assert self.entry_balance_start is not None
+            self.entry_group_alphas = self._entry_alphas(progress, "transition_in")
+            anchored_groups = (
+                {"arms"}
+                if self.entry_mode == "grouped"
+                else {"legs", "waist", "arms"}
+            )
+            target = continuous_group_transition_target(
+                self.entry_anchor_target,
+                self.entry_balance_start,
+                walk_target,
+                motion_target,
+                self.entry_group_alphas,
+                self.joint_map,
+                anchored_groups=anchored_groups,
+            )
+            if self.state_step == 0:
+                self._log_event(
+                    "entry_transition_started",
+                    entry_mode=self.entry_mode,
+                    group_alphas=dict(self.entry_group_alphas),
+                    raw_target_delta=self._target_group_deltas(
+                        target,
+                        self.entry_anchor_target,
+                    ),
+                    metrics=self._state_metrics(self.last_contacts),
+                )
         self.state_step += 1
         if progress >= 1.0:
             self.motion_step = 0
+            self._log_event(
+                "entry_transition_completed",
+                entry_mode=self.entry_mode,
+                transition_seconds=self.state_step * self.control_dt,
+                group_alphas=dict(self.entry_group_alphas),
+                metrics=self._state_metrics(self.last_contacts),
+            )
             self._set_state(ControllerState.MOTION, "motion_control_acquired")
         return ControllerOutput(target, observation, action, progress)
 
@@ -802,6 +931,7 @@ class MultiEvt2Controller:
         else:
             raise RuntimeError(f"Unknown controller state {self.state!r}")
 
+        self.last_raw_target = copy_target(output.target, "raw_requested")
         output.target = self.target_limiter.apply(output.target)
         self.last_target = output.target
         self.global_step += 1
@@ -811,6 +941,7 @@ class MultiEvt2Controller:
         return {
             "state": self.state.value,
             "busy": self.busy,
+            "entry_mode": self.entry_mode,
             "recovery_failed": self.recovery_failed,
             "last_rejection_reason": self.last_rejection_reason,
             "last_start_delta": self.last_start_delta,
