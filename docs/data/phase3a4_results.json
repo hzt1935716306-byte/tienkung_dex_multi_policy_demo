@@ -1,0 +1,862 @@
+{
+  "passed": true,
+  "diagnosis": {
+    "walkamp_zero_periodic_stepping": "no; standard zero-command standing produced no complete steps, and walk-stop settling ended within about 0.82 s",
+    "bow_adjustment_classification": "4 complete steps occur between bow exit start and recovery completion, versus 0 for wave; no bow steps remain after recovery, so the evidence favors terminal-state dynamic recovery rather than ordinary zero-speed stepping",
+    "stand_policy_recommendation": "not required for ordinary zero-command standing; keep READY reserved for a bow-state recovery policy if further reduction is required",
+    "ready_comparison": "no physical benefit over Phase 3A.3"
+  },
+  "baseline": {
+    "stand_zero_30": {
+      "scenario": "stand_zero_30",
+      "passed": true,
+      "control_dt": 0.01,
+      "measurement": {
+        "name": "zero_command_30s",
+        "start_step": 200,
+        "end_step": 3200,
+        "duration_seconds": 30.0,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.003963984588851352,
+        "right_foot_planar_displacement": 0.004199784033760568,
+        "com_planar_displacement": 0.003033992648797345,
+        "root_planar_displacement": 0.003936278486133205,
+        "maximum_com_xy_speed": 0.010670748386963,
+        "maximum_root_xy_speed": 0.014613075511740884,
+        "maximum_abs_roll": 0.0015317250090704606,
+        "maximum_abs_pitch": 0.0015458606015667402,
+        "maximum_angular_speed": 0.010616626385091917,
+        "maximum_joint_speed": 0.06467132521095777,
+        "maximum_tracking_error": 0.2939885081313952,
+        "maximum_abs_torque": 13.698694478987868,
+        "maximum_torque_delta": 0.26830716408093025
+      }
+    },
+    "walk_stop_30": {
+      "scenario": "walk_stop_30",
+      "passed": true,
+      "control_dt": 0.01,
+      "measurement": {
+        "name": "after_walk_stop_30s",
+        "start_step": 800,
+        "end_step": 3800,
+        "duration_seconds": 30.0,
+        "complete_step_count": 4,
+        "complete_steps": [
+          {
+            "step": 806,
+            "time": 8.06,
+            "foot": "right",
+            "flight_seconds": 0.13,
+            "horizontal_displacement": 0.11371064907141208,
+            "takeoff_xy": [
+              1.066899535413434,
+              -0.16004071073174717
+            ],
+            "landing_xy": [
+              0.9532911167696859,
+              -0.15522003385928546
+            ]
+          },
+          {
+            "step": 838,
+            "time": 8.38,
+            "foot": "left",
+            "flight_seconds": 0.12,
+            "horizontal_displacement": 0.29119713180164525,
+            "takeoff_xy": [
+              0.850333191531066,
+              0.13686608796463479
+            ],
+            "landing_xy": [
+              1.1187393191543356,
+              0.2497993435795594
+            ]
+          },
+          {
+            "step": 868,
+            "time": 8.68,
+            "foot": "right",
+            "flight_seconds": 0.24,
+            "horizontal_displacement": 0.20513985467610005,
+            "takeoff_xy": [
+              0.9556921545614792,
+              -0.15793629536224013
+            ],
+            "landing_xy": [
+              1.1257764963647832,
+              -0.04324681611558778
+            ]
+          },
+          {
+            "step": 882,
+            "time": 8.82,
+            "foot": "left",
+            "flight_seconds": 0.06,
+            "horizontal_displacement": 0.03668662191764399,
+            "takeoff_xy": [
+              1.1175607837094677,
+              0.25226763332963675
+            ],
+            "landing_xy": [
+              1.0810078783337684,
+              0.24913820265883801
+            ]
+          }
+        ],
+        "contact_edge_count": 7,
+        "single_support_seconds": 0.45,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.26302782512744255,
+        "right_foot_planar_displacement": 0.21062660685553686,
+        "com_planar_displacement": 0.1917760500928623,
+        "root_planar_displacement": 0.18320280464542404,
+        "maximum_com_xy_speed": 0.4694145355398983,
+        "maximum_root_xy_speed": 0.45057955245758696,
+        "maximum_abs_roll": 0.11478409899430071,
+        "maximum_abs_pitch": 0.06641115861276199,
+        "maximum_angular_speed": 1.450909825736964,
+        "maximum_joint_speed": 8.51469680849897,
+        "maximum_tracking_error": 0.9800403127609738,
+        "maximum_abs_torque": 117.26668512682258,
+        "maximum_torque_delta": 34.66223482807115
+      }
+    },
+    "wave_return_20": {
+      "scenario": "wave_return_20",
+      "passed": true,
+      "control_dt": 0.01,
+      "measurement": {
+        "name": "after_wave_recovery_20s",
+        "start_step": 1041,
+        "end_step": 3041,
+        "duration_seconds": 20.0,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.019427228410624914,
+        "right_foot_planar_displacement": 0.016135170103599224,
+        "com_planar_displacement": 0.0031908714309764456,
+        "root_planar_displacement": 0.005996086692457923,
+        "maximum_com_xy_speed": 0.030537938141856687,
+        "maximum_root_xy_speed": 0.037400997167190066,
+        "maximum_abs_roll": 0.006674244910950313,
+        "maximum_abs_pitch": 0.014344299761715015,
+        "maximum_angular_speed": 0.02550404903128245,
+        "maximum_joint_speed": 0.07854318543794617,
+        "maximum_tracking_error": 0.494590312053495,
+        "maximum_abs_torque": 26.273418116366784,
+        "maximum_torque_delta": 0.27150917841903377
+      },
+      "transition_out": {
+        "name": "transition_out",
+        "start_step": 951,
+        "end_step": 1012,
+        "duration_seconds": 0.61,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.015427429207041573,
+        "right_foot_planar_displacement": 0.0025953708887449605,
+        "com_planar_displacement": 0.009586476427808062,
+        "root_planar_displacement": 0.01626035205360105,
+        "maximum_com_xy_speed": 0.03829224575653899,
+        "maximum_root_xy_speed": 0.06207051678790104,
+        "maximum_abs_roll": 0.014052537522722968,
+        "maximum_abs_pitch": 0.05064014476359079,
+        "maximum_angular_speed": 0.407841598359862,
+        "maximum_joint_speed": 0.9386103382877281,
+        "maximum_tracking_error": 0.49808535133886467,
+        "maximum_abs_torque": 22.991937566096937,
+        "maximum_torque_delta": 1.6564624725019481
+      },
+      "walkamp_recover": {
+        "name": "walkamp_recover",
+        "start_step": 1011,
+        "end_step": 1042,
+        "duration_seconds": 0.31,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.0012137086396420598,
+        "right_foot_planar_displacement": 0.0005592597778447671,
+        "com_planar_displacement": 0.008931893141760034,
+        "root_planar_displacement": 0.010919128485906796,
+        "maximum_com_xy_speed": 0.030831542714838244,
+        "maximum_root_xy_speed": 0.03851616753691279,
+        "maximum_abs_roll": 0.004837797128989147,
+        "maximum_abs_pitch": 0.01279440553843548,
+        "maximum_angular_speed": 0.17321185284333032,
+        "maximum_joint_speed": 0.2865611495532324,
+        "maximum_tracking_error": 0.40450652711873836,
+        "maximum_abs_torque": 22.9001817214014,
+        "maximum_torque_delta": 0.742505378132849
+      },
+      "exit_and_recovery": {
+        "name": "exit_and_recovery",
+        "start_step": 951,
+        "end_step": 1042,
+        "duration_seconds": 0.91,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.016614193493403404,
+        "right_foot_planar_displacement": 0.003137378298922748,
+        "com_planar_displacement": 0.00923959888494182,
+        "root_planar_displacement": 0.012495703430010318,
+        "maximum_com_xy_speed": 0.03829224575653899,
+        "maximum_root_xy_speed": 0.06207051678790104,
+        "maximum_abs_roll": 0.014052537522722968,
+        "maximum_abs_pitch": 0.05064014476359079,
+        "maximum_angular_speed": 0.407841598359862,
+        "maximum_joint_speed": 0.9386103382877281,
+        "maximum_tracking_error": 0.49808535133886467,
+        "maximum_abs_torque": 22.991937566096937,
+        "maximum_torque_delta": 1.6564624725019481
+      }
+    },
+    "bow_return_20": {
+      "scenario": "bow_return_20",
+      "passed": true,
+      "control_dt": 0.01,
+      "measurement": {
+        "name": "after_bow_recovery_20s",
+        "start_step": 1036,
+        "end_step": 3036,
+        "duration_seconds": 20.0,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.00272949379252227,
+        "right_foot_planar_displacement": 0.0023964825075417804,
+        "com_planar_displacement": 0.015634215708786495,
+        "root_planar_displacement": 0.01835172277450848,
+        "maximum_com_xy_speed": 0.07474549891260451,
+        "maximum_root_xy_speed": 0.08834675707496778,
+        "maximum_abs_roll": 0.0033559028907758095,
+        "maximum_abs_pitch": 0.01705617729156945,
+        "maximum_angular_speed": 0.06956154280282426,
+        "maximum_joint_speed": 0.1632504665895075,
+        "maximum_tracking_error": 0.7003485304787926,
+        "maximum_abs_torque": 21.068179605364794,
+        "maximum_torque_delta": 0.5207990128517439
+      },
+      "transition_out": {
+        "name": "transition_out",
+        "start_step": 883,
+        "end_step": 944,
+        "duration_seconds": 0.61,
+        "complete_step_count": 1,
+        "complete_steps": [
+          {
+            "step": 942,
+            "time": 9.42,
+            "foot": "left",
+            "flight_seconds": 0.15,
+            "horizontal_displacement": 0.3224310786043485,
+            "takeoff_xy": [
+              0.05269325823735503,
+              0.15496104861493973
+            ],
+            "landing_xy": [
+              0.3560179309317664,
+              0.045617812039503755
+            ]
+          }
+        ],
+        "contact_edge_count": 2,
+        "single_support_seconds": 0.15,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.32837394501286526,
+        "right_foot_planar_displacement": 0.0023654325207219475,
+        "com_planar_displacement": 0.09010828735837874,
+        "root_planar_displacement": 0.062257179787931036,
+        "maximum_com_xy_speed": 0.25995526665871693,
+        "maximum_root_xy_speed": 0.2646469981062459,
+        "maximum_abs_roll": 0.07596068196811194,
+        "maximum_abs_pitch": 0.0495713969288108,
+        "maximum_angular_speed": 1.306911272958201,
+        "maximum_joint_speed": 9.485121270849616,
+        "maximum_tracking_error": 0.787622661931605,
+        "maximum_abs_torque": 86.63002522109335,
+        "maximum_torque_delta": 25.628463821791797
+      },
+      "walkamp_recover": {
+        "name": "walkamp_recover",
+        "start_step": 943,
+        "end_step": 1037,
+        "duration_seconds": 0.9400000000000001,
+        "complete_step_count": 3,
+        "complete_steps": [
+          {
+            "step": 965,
+            "time": 9.65,
+            "foot": "right",
+            "flight_seconds": 0.1,
+            "horizontal_displacement": 0.07003893000132501,
+            "takeoff_xy": [
+              0.046794525252371266,
+              -0.19256663176856884
+            ],
+            "landing_xy": [
+              0.11034862144249556,
+              -0.22200009186395914
+            ]
+          },
+          {
+            "step": 988,
+            "time": 9.88,
+            "foot": "left",
+            "flight_seconds": 0.14,
+            "horizontal_displacement": 0.22060665607269955,
+            "takeoff_xy": [
+              0.35339952597580043,
+              0.045390292126686
+            ],
+            "landing_xy": [
+              0.133628914239852,
+              0.0645781768664208
+            ]
+          },
+          {
+            "step": 1004,
+            "time": 10.040000000000001,
+            "foot": "right",
+            "flight_seconds": 0.1,
+            "horizontal_displacement": 0.031541967097449636,
+            "takeoff_xy": [
+              0.10317986511423298,
+              -0.23680863673669955
+            ],
+            "landing_xy": [
+              0.07694960238272527,
+              -0.21929095979560165
+            ]
+          }
+        ],
+        "contact_edge_count": 6,
+        "single_support_seconds": 0.34,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.22327891039150355,
+        "right_foot_planar_displacement": 0.05180978108467229,
+        "com_planar_displacement": 0.04065625753561785,
+        "root_planar_displacement": 0.02797800045803022,
+        "maximum_com_xy_speed": 0.20965396360380062,
+        "maximum_root_xy_speed": 0.1880270876069945,
+        "maximum_abs_roll": 0.0893822759313778,
+        "maximum_abs_pitch": 0.1047066435748918,
+        "maximum_angular_speed": 1.4908105500101299,
+        "maximum_joint_speed": 6.6864232420018865,
+        "maximum_tracking_error": 1.050655911310139,
+        "maximum_abs_torque": 114.37486926700842,
+        "maximum_torque_delta": 44.814570137033925
+      },
+      "exit_and_recovery": {
+        "name": "exit_and_recovery",
+        "start_step": 883,
+        "end_step": 1037,
+        "duration_seconds": 1.54,
+        "complete_step_count": 4,
+        "complete_steps": [
+          {
+            "step": 942,
+            "time": 9.42,
+            "foot": "left",
+            "flight_seconds": 0.15,
+            "horizontal_displacement": 0.3224310786043485,
+            "takeoff_xy": [
+              0.05269325823735503,
+              0.15496104861493973
+            ],
+            "landing_xy": [
+              0.3560179309317664,
+              0.045617812039503755
+            ]
+          },
+          {
+            "step": 965,
+            "time": 9.65,
+            "foot": "right",
+            "flight_seconds": 0.1,
+            "horizontal_displacement": 0.07003893000132501,
+            "takeoff_xy": [
+              0.046794525252371266,
+              -0.19256663176856884
+            ],
+            "landing_xy": [
+              0.11034862144249556,
+              -0.22200009186395914
+            ]
+          },
+          {
+            "step": 988,
+            "time": 9.88,
+            "foot": "left",
+            "flight_seconds": 0.14,
+            "horizontal_displacement": 0.22060665607269955,
+            "takeoff_xy": [
+              0.35339952597580043,
+              0.045390292126686
+            ],
+            "landing_xy": [
+              0.133628914239852,
+              0.0645781768664208
+            ]
+          },
+          {
+            "step": 1004,
+            "time": 10.040000000000001,
+            "foot": "right",
+            "flight_seconds": 0.1,
+            "horizontal_displacement": 0.031541967097449636,
+            "takeoff_xy": [
+              0.10317986511423298,
+              -0.23680863673669955
+            ],
+            "landing_xy": [
+              0.07694960238272527,
+              -0.21929095979560165
+            ]
+          }
+        ],
+        "contact_edge_count": 8,
+        "single_support_seconds": 0.49,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.12350304952465939,
+        "right_foot_planar_displacement": 0.053546088046193034,
+        "com_planar_displacement": 0.06569091819471143,
+        "root_planar_displacement": 0.05229133988179849,
+        "maximum_com_xy_speed": 0.25995526665871693,
+        "maximum_root_xy_speed": 0.2646469981062459,
+        "maximum_abs_roll": 0.0893822759313778,
+        "maximum_abs_pitch": 0.1047066435748918,
+        "maximum_angular_speed": 1.4908105500101299,
+        "maximum_joint_speed": 9.485121270849616,
+        "maximum_tracking_error": 1.050655911310139,
+        "maximum_abs_torque": 114.37486926700842,
+        "maximum_torque_delta": 44.814570137033925
+      }
+    }
+  },
+  "ready_comparison": {
+    "wave_return_20_ready": {
+      "scenario": "wave_return_20",
+      "passed": true,
+      "control_dt": 0.01,
+      "measurement": {
+        "name": "after_wave_recovery_20s",
+        "start_step": 1071,
+        "end_step": 3071,
+        "duration_seconds": 20.0,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.01882740661506449,
+        "right_foot_planar_displacement": 0.015947956632846642,
+        "com_planar_displacement": 0.010519825188091953,
+        "root_planar_displacement": 0.012904610794791055,
+        "maximum_com_xy_speed": 0.01296442581649302,
+        "maximum_root_xy_speed": 0.015214363627682484,
+        "maximum_abs_roll": 0.00656897087711077,
+        "maximum_abs_pitch": 0.014344299761715015,
+        "maximum_angular_speed": 0.02550404903128245,
+        "maximum_joint_speed": 0.07161881868024327,
+        "maximum_tracking_error": 0.4783778966981459,
+        "maximum_abs_torque": 26.273418116366784,
+        "maximum_torque_delta": 0.2572458658510648
+      },
+      "transition_out": {
+        "name": "transition_out",
+        "start_step": 951,
+        "end_step": 1012,
+        "duration_seconds": 0.61,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.015427429207041573,
+        "right_foot_planar_displacement": 0.0025953708887449605,
+        "com_planar_displacement": 0.009586476427808062,
+        "root_planar_displacement": 0.01626035205360105,
+        "maximum_com_xy_speed": 0.03829224575653899,
+        "maximum_root_xy_speed": 0.06207051678790104,
+        "maximum_abs_roll": 0.014052537522722968,
+        "maximum_abs_pitch": 0.05064014476359079,
+        "maximum_angular_speed": 0.407841598359862,
+        "maximum_joint_speed": 0.9386103382877281,
+        "maximum_tracking_error": 0.49808535133886467,
+        "maximum_abs_torque": 22.991937566096937,
+        "maximum_torque_delta": 1.6564624725019481
+      },
+      "walkamp_recover": {
+        "name": "walkamp_recover",
+        "start_step": 1011,
+        "end_step": 1072,
+        "duration_seconds": 0.61,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.00200192299011009,
+        "right_foot_planar_displacement": 0.0009349816323603279,
+        "com_planar_displacement": 0.01422071833940955,
+        "root_planar_displacement": 0.016858517739802382,
+        "maximum_com_xy_speed": 0.030831542714838244,
+        "maximum_root_xy_speed": 0.03851616753691279,
+        "maximum_abs_roll": 0.006674244910950313,
+        "maximum_abs_pitch": 0.014189530169393198,
+        "maximum_angular_speed": 0.17321185284333032,
+        "maximum_joint_speed": 0.2865611495532324,
+        "maximum_tracking_error": 0.494590312053495,
+        "maximum_abs_torque": 26.266960570449136,
+        "maximum_torque_delta": 0.742505378132849
+      },
+      "exit_and_recovery": {
+        "name": "exit_and_recovery",
+        "start_step": 951,
+        "end_step": 1072,
+        "duration_seconds": 1.21,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.017357455955587565,
+        "right_foot_planar_displacement": 0.0034628940929068504,
+        "com_planar_displacement": 0.014466331435038863,
+        "root_planar_displacement": 0.016020809118509574,
+        "maximum_com_xy_speed": 0.03829224575653899,
+        "maximum_root_xy_speed": 0.06207051678790104,
+        "maximum_abs_roll": 0.014052537522722968,
+        "maximum_abs_pitch": 0.05064014476359079,
+        "maximum_angular_speed": 0.407841598359862,
+        "maximum_joint_speed": 0.9386103382877281,
+        "maximum_tracking_error": 0.49808535133886467,
+        "maximum_abs_torque": 26.266960570449136,
+        "maximum_torque_delta": 1.6564624725019481
+      }
+    },
+    "bow_return_20_ready": {
+      "scenario": "bow_return_20",
+      "passed": true,
+      "control_dt": 0.01,
+      "measurement": {
+        "name": "after_bow_recovery_20s",
+        "start_step": 1066,
+        "end_step": 3066,
+        "duration_seconds": 20.0,
+        "complete_step_count": 0,
+        "complete_steps": [],
+        "contact_edge_count": 0,
+        "single_support_seconds": 0.0,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.0025661799132418754,
+        "right_foot_planar_displacement": 0.0024692227753276793,
+        "com_planar_displacement": 0.013741342568984653,
+        "root_planar_displacement": 0.01623595135733756,
+        "maximum_com_xy_speed": 0.04068693855160015,
+        "maximum_root_xy_speed": 0.04667527903524065,
+        "maximum_abs_roll": 0.0033559028907758095,
+        "maximum_abs_pitch": 0.01470729730988025,
+        "maximum_angular_speed": 0.03283054745917475,
+        "maximum_joint_speed": 0.07224375168588068,
+        "maximum_tracking_error": 0.46210608985237966,
+        "maximum_abs_torque": 15.752513227124142,
+        "maximum_torque_delta": 0.3568067467645424
+      },
+      "transition_out": {
+        "name": "transition_out",
+        "start_step": 883,
+        "end_step": 944,
+        "duration_seconds": 0.61,
+        "complete_step_count": 1,
+        "complete_steps": [
+          {
+            "step": 942,
+            "time": 9.42,
+            "foot": "left",
+            "flight_seconds": 0.15,
+            "horizontal_displacement": 0.3224310786043485,
+            "takeoff_xy": [
+              0.05269325823735503,
+              0.15496104861493973
+            ],
+            "landing_xy": [
+              0.3560179309317664,
+              0.045617812039503755
+            ]
+          }
+        ],
+        "contact_edge_count": 2,
+        "single_support_seconds": 0.15,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.32837394501286526,
+        "right_foot_planar_displacement": 0.0023654325207219475,
+        "com_planar_displacement": 0.09010828735837874,
+        "root_planar_displacement": 0.062257179787931036,
+        "maximum_com_xy_speed": 0.25995526665871693,
+        "maximum_root_xy_speed": 0.2646469981062459,
+        "maximum_abs_roll": 0.07596068196811194,
+        "maximum_abs_pitch": 0.0495713969288108,
+        "maximum_angular_speed": 1.306911272958201,
+        "maximum_joint_speed": 9.485121270849616,
+        "maximum_tracking_error": 0.787622661931605,
+        "maximum_abs_torque": 86.63002522109335,
+        "maximum_torque_delta": 25.628463821791797
+      },
+      "walkamp_recover": {
+        "name": "walkamp_recover",
+        "start_step": 943,
+        "end_step": 1067,
+        "duration_seconds": 1.24,
+        "complete_step_count": 3,
+        "complete_steps": [
+          {
+            "step": 965,
+            "time": 9.65,
+            "foot": "right",
+            "flight_seconds": 0.1,
+            "horizontal_displacement": 0.07003893000132501,
+            "takeoff_xy": [
+              0.046794525252371266,
+              -0.19256663176856884
+            ],
+            "landing_xy": [
+              0.11034862144249556,
+              -0.22200009186395914
+            ]
+          },
+          {
+            "step": 988,
+            "time": 9.88,
+            "foot": "left",
+            "flight_seconds": 0.14,
+            "horizontal_displacement": 0.22060665607269955,
+            "takeoff_xy": [
+              0.35339952597580043,
+              0.045390292126686
+            ],
+            "landing_xy": [
+              0.133628914239852,
+              0.0645781768664208
+            ]
+          },
+          {
+            "step": 1004,
+            "time": 10.040000000000001,
+            "foot": "right",
+            "flight_seconds": 0.1,
+            "horizontal_displacement": 0.031541967097449636,
+            "takeoff_xy": [
+              0.10317986511423298,
+              -0.23680863673669955
+            ],
+            "landing_xy": [
+              0.07694960238272527,
+              -0.21929095979560165
+            ]
+          }
+        ],
+        "contact_edge_count": 6,
+        "single_support_seconds": 0.34,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.2231916250241614,
+        "right_foot_planar_displacement": 0.05187212845874305,
+        "com_planar_displacement": 0.05307627199949473,
+        "root_planar_displacement": 0.04532777213480999,
+        "maximum_com_xy_speed": 0.20965396360380062,
+        "maximum_root_xy_speed": 0.1880270876069945,
+        "maximum_abs_roll": 0.0893822759313778,
+        "maximum_abs_pitch": 0.1047066435748918,
+        "maximum_angular_speed": 1.4908105500101299,
+        "maximum_joint_speed": 6.6864232420018865,
+        "maximum_tracking_error": 1.050655911310139,
+        "maximum_abs_torque": 114.37486926700842,
+        "maximum_torque_delta": 44.814570137033925
+      },
+      "exit_and_recovery": {
+        "name": "exit_and_recovery",
+        "start_step": 883,
+        "end_step": 1067,
+        "duration_seconds": 1.84,
+        "complete_step_count": 4,
+        "complete_steps": [
+          {
+            "step": 942,
+            "time": 9.42,
+            "foot": "left",
+            "flight_seconds": 0.15,
+            "horizontal_displacement": 0.3224310786043485,
+            "takeoff_xy": [
+              0.05269325823735503,
+              0.15496104861493973
+            ],
+            "landing_xy": [
+              0.3560179309317664,
+              0.045617812039503755
+            ]
+          },
+          {
+            "step": 965,
+            "time": 9.65,
+            "foot": "right",
+            "flight_seconds": 0.1,
+            "horizontal_displacement": 0.07003893000132501,
+            "takeoff_xy": [
+              0.046794525252371266,
+              -0.19256663176856884
+            ],
+            "landing_xy": [
+              0.11034862144249556,
+              -0.22200009186395914
+            ]
+          },
+          {
+            "step": 988,
+            "time": 9.88,
+            "foot": "left",
+            "flight_seconds": 0.14,
+            "horizontal_displacement": 0.22060665607269955,
+            "takeoff_xy": [
+              0.35339952597580043,
+              0.045390292126686
+            ],
+            "landing_xy": [
+              0.133628914239852,
+              0.0645781768664208
+            ]
+          },
+          {
+            "step": 1004,
+            "time": 10.040000000000001,
+            "foot": "right",
+            "flight_seconds": 0.1,
+            "horizontal_displacement": 0.031541967097449636,
+            "takeoff_xy": [
+              0.10317986511423298,
+              -0.23680863673669955
+            ],
+            "landing_xy": [
+              0.07694960238272527,
+              -0.21929095979560165
+            ]
+          }
+        ],
+        "contact_edge_count": 8,
+        "single_support_seconds": 0.49,
+        "no_support_seconds": 0.0,
+        "left_foot_planar_displacement": 0.12370951655419073,
+        "right_foot_planar_displacement": 0.05360948795929714,
+        "com_planar_displacement": 0.07447099202195297,
+        "root_planar_displacement": 0.06576123974023014,
+        "maximum_com_xy_speed": 0.25995526665871693,
+        "maximum_root_xy_speed": 0.2646469981062459,
+        "maximum_abs_roll": 0.0893822759313778,
+        "maximum_abs_pitch": 0.1047066435748918,
+        "maximum_angular_speed": 1.4908105500101299,
+        "maximum_joint_speed": 9.485121270849616,
+        "maximum_tracking_error": 1.050655911310139,
+        "maximum_abs_torque": 114.37486926700842,
+        "maximum_torque_delta": 44.814570137033925
+      }
+    }
+  },
+  "continuous_no_reset": {
+    "bow_repeat20": {
+      "passed": true,
+      "completed_actions": 20,
+      "minimum_root_z": 0.9450900161783968,
+      "complete_step_count": 78,
+      "contact_edge_count": 192,
+      "left_foot_displacement": [
+        -0.18291730467330067,
+        -0.9027815194998686,
+        -0.015620494905650373
+      ],
+      "right_foot_displacement": [
+        -0.3652965367262482,
+        -0.37562346222974297,
+        -0.015600573247616314
+      ],
+      "com_displacement": [
+        -0.22137958503012825,
+        -0.6168185613617837,
+        -0.016014552971854612
+      ],
+      "maximum_com_xy_speed": 0.29442284977487776,
+      "maximum_joint_speed": 11.376364970382784,
+      "maximum_abs_torque": 172.16129802508104,
+      "maximum_torque_delta": 47.24181154583192
+    },
+    "wave_repeat20": {
+      "passed": true,
+      "completed_actions": 20,
+      "minimum_root_z": 0.9876640353615977,
+      "complete_step_count": 1,
+      "contact_edge_count": 4,
+      "left_foot_displacement": [
+        0.04930719656078257,
+        -0.0484672736365859,
+        -0.015582394778457255
+      ],
+      "right_foot_displacement": [
+        -0.06629840648413554,
+        -0.06319363788477339,
+        -0.01561840352024813
+      ],
+      "com_displacement": [
+        -0.005526132271044784,
+        -0.05087840712285104,
+        -0.016183496116477625
+      ],
+      "maximum_com_xy_speed": 0.1168643578625786,
+      "maximum_joint_speed": 3.5079571855266787,
+      "maximum_abs_torque": 80.98554766536964,
+      "maximum_torque_delta": 36.15751611289975
+    },
+    "alternate_repeat20": {
+      "passed": true,
+      "completed_actions": 20,
+      "minimum_root_z": 0.9444253171546996,
+      "complete_step_count": 46,
+      "contact_edge_count": 102,
+      "left_foot_displacement": [
+        -0.17029517874487374,
+        -0.7043331025215552,
+        -0.015585103875171489
+      ],
+      "right_foot_displacement": [
+        -0.4591266240091356,
+        -0.2797652025211179,
+        -0.015623764849675195
+      ],
+      "com_displacement": [
+        -0.27835832907023617,
+        -0.4624271921805502,
+        -0.016171848313316195
+      ],
+      "maximum_com_xy_speed": 0.28426544396235714,
+      "maximum_joint_speed": 9.861169403093546,
+      "maximum_abs_torque": 180.30490562033577,
+      "maximum_torque_delta": 48.03034953145952
+    }
+  }
+}

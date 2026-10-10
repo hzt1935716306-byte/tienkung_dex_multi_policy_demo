@@ -15,6 +15,7 @@ from .motion_evt2 import MotionEvt2Policy
 from .motion_evt2_runner import FootContactMonitor
 from .multi_evt2_controller import CommandStatus, ControllerState, MultiEvt2Controller
 from .robot import build_joint_map
+from .stand_diagnostics import STAND_DIAGNOSTIC_COLUMNS, StandDiagnostics
 from .transition_controller import ConstrainedPDController, copy_target
 from .walkamp import WalkAmpPolicy, load_walkamp_config
 from .walkamp_runner import CsvStateLogger, quaternion_to_rpy, setup_initial_pose
@@ -169,6 +170,17 @@ class ScheduledCommands:
             for item in config.get("events", [])
         ]
         self.next_event = 0
+        self.walk_commands = [
+            (
+                int(round(float(item["time"]) / control_dt)),
+                np.asarray(item["command"], dtype=np.float32),
+            )
+            for item in config.get("walk_commands", [])
+        ]
+        for _, command in self.walk_commands:
+            if command.shape != (3,):
+                raise ValueError("walk command must contain [vx, vy, yaw]")
+        self.next_walk_command = 0
         self.perturbations = [
             (int(round(float(item["time"]) / control_dt)), item)
             for item in config.get("perturbations", [])
@@ -181,6 +193,27 @@ class ScheduledCommands:
             values.append(self.events[self.next_event][1])
             self.next_event += 1
         return values
+
+    def apply_walk_commands(
+        self,
+        step: int,
+        controller: MultiEvt2Controller,
+    ) -> None:
+        while (
+            self.next_walk_command < len(self.walk_commands)
+            and step >= self.walk_commands[self.next_walk_command][0]
+        ):
+            _, command = self.walk_commands[self.next_walk_command]
+            if controller.busy:
+                raise RuntimeError(
+                    "scheduled WALKAMP command reached while an action is active"
+                )
+            controller.walkamp.set_command(command)
+            print(
+                "[SCENARIO] WALKAMP command "
+                f"vx={command[0]:.2f} vy={command[1]:.2f} yaw={command[2]:.2f}"
+            )
+            self.next_walk_command += 1
 
     def apply_perturbations(self, step: int, data) -> None:
         while (
@@ -448,6 +481,11 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         control_dt,
     )
     contact_monitor = FootContactMonitor(model)
+    stand_diagnostics = StandDiagnostics(
+        model,
+        control_dt,
+        config.get("stand_diagnostics", {}),
+    )
     pd = ConstrainedPDController(
         joint_map,
         sim_dt,
@@ -482,7 +520,11 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         else CsvStateLogger(
             log_path,
             joint_map.names,
-            extra_columns=EXTRA_LOG_COLUMNS + entry_joint_log_columns(joint_map.names),
+            extra_columns=(
+                EXTRA_LOG_COLUMNS
+                + STAND_DIAGNOSTIC_COLUMNS
+                + entry_joint_log_columns(joint_map.names)
+            ),
         )
     )
     debug_interval = (
@@ -537,6 +579,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         if schedule is not None:
             for command in schedule.commands(step):
                 controller.request_command(command, f"scenario:{args.scenario}")
+            schedule.apply_walk_commands(step, controller)
             schedule.apply_perturbations(step, data)
         for command, source in command_reader.read():
             controller.request_command(command, source)
@@ -556,6 +599,14 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             mujoco.mj_step(model, data)
         assert torque_result is not None
         executed_steps = step + 1
+        logged_contacts = contact_monitor.measure(data)
+        diagnostic_values = stand_diagnostics.update(
+            step,
+            data,
+            logged_contacts,
+            data.qvel[joint_map.qvel_adr],
+            torque_result.torque,
+        )
 
         rpy = quaternion_to_rpy(data.sensor("orientation").data.copy())
         minimum_root_z = min(minimum_root_z, float(data.qpos[2]))
@@ -944,7 +995,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
                 output.action,
                 {
                     "transition_alpha": output.transition_alpha,
-                    **contacts,
+                    **logged_contacts,
                     "maximum_target_rate": controller.target_limiter.last_maximum_rate,
                     "requested_target_delta": (
                         controller.target_limiter.last_requested_maximum_delta
@@ -955,6 +1006,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
                     "torque_slew_limited_fraction": torque_result.slew_limited_fraction,
                     "raw_torque_scale": raw_target.torque_scale,
                     "target_torque_scale": output.target.torque_scale,
+                    **diagnostic_values,
                     **entry_values,
                 },
             )
@@ -1040,6 +1092,8 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         "final_root_x": float(data.qpos[0]),
         "final_root_y": float(data.qpos[1]),
         "controller": controller.summary(),
+        "stand_diagnostics": stand_diagnostics.summary(),
+        "measurement": scenario_values.get("measurement", {}),
         "model": config["model"],
         "walkamp_policy": walkamp_config["policy"],
     }

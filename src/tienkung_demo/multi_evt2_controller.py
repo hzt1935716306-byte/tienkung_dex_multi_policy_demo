@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from .motion_evt2 import MotionEvt2Policy
+from .ready_controller import ReadyController, build_ready_controller
 from .robot import ControlTarget, JointMap
 from .transition_controller import (
     TargetRateLimiter,
@@ -27,6 +28,7 @@ from .walkamp_runner import quaternion_to_rpy
 
 class ControllerState(str, Enum):
     WALKAMP_IDLE = "WALKAMP_IDLE"
+    READY = "READY"
     READY_CHECK = "READY_CHECK"
     PRE_ALIGN = "PRE_ALIGN"
     TRANSITION_IN = "TRANSITION_IN"
@@ -103,6 +105,13 @@ class MultiEvt2Controller:
         self.command_records: list[CommandRecord] = []
         self.next_command_id = 1
         self.ready_stable_steps = 0
+        ready_config = config.get("ready", {})
+        self.ready_enabled = bool(ready_config.get("enabled", False))
+        self.ready_controller: ReadyController = build_ready_controller(
+            ready_config,
+            walkamp,
+        )
+        self.ready_phase = ""
         self.recover_stable_steps = 0
         self.reentry_started = False
         self.reentry_step = 0
@@ -260,7 +269,10 @@ class MultiEvt2Controller:
         self.last_exit_previews = []
         self.selected_exit_preview = {}
         self._update_record(record, CommandStatus.ACCEPTED)
-        self._set_state(ControllerState.READY_CHECK, f"accepted:{action_key}")
+        if self.ready_enabled:
+            self._begin_ready("before_motion", f"accepted:{action_key}")
+        else:
+            self._set_state(ControllerState.READY_CHECK, f"accepted:{action_key}")
         return record
 
     def _request_abort(self, source: str) -> CommandRecord:
@@ -658,6 +670,8 @@ class MultiEvt2Controller:
         self.active_record = None
         self.active_motion = None
         self.active_key = None
+        self.ready_phase = ""
+        self.ready_stable_steps = 0
         self.walkamp.begin_from_live_state((0.0, 0.0, 0.0))
         self._set_state(ControllerState.WALKAMP_IDLE, f"rejected:{reason}")
 
@@ -782,6 +796,8 @@ class MultiEvt2Controller:
         self.handoff_stable_steps = 0
         self.exit_window_opened = False
         self.recover_stable_steps = 0
+        self.ready_phase = ""
+        self.ready_stable_steps = 0
         self.entry_anchor_target = None
         self.entry_balance_start = None
         self.entry_group_alphas = {"legs": 0.0, "waist": 0.0, "arms": 0.0}
@@ -796,6 +812,80 @@ class MultiEvt2Controller:
         target, observation, action = self.walkamp.step()
         return ControllerOutput(target, observation, action, 0.0)
 
+    def _begin_ready(self, phase: str, reason: str) -> None:
+        if phase not in ("before_motion", "after_motion"):
+            raise ValueError(f"Unknown READY phase {phase!r}")
+        self.ready_phase = phase
+        self.ready_stable_steps = 0
+        diagnostics = self.ready_controller.begin_from_live_state()
+        self._set_state(ControllerState.READY, reason)
+        self._log_event(
+            "ready_started",
+            ready_phase=phase,
+            ready_controller=self.ready_controller.name,
+            diagnostics=diagnostics,
+            metrics=self._state_metrics(self.last_contacts),
+        )
+
+    def _activate_motion_entry(self) -> None:
+        assert self.active_motion is not None
+        diagnostics = self.active_motion.begin_from_live_state()
+        reference_target = self.active_motion.reference_start_target()
+        self.last_start_delta = self._start_delta(reference_target)
+        delta_reasons = self._validate_start_delta(self.last_start_delta)
+        print(
+            f"[INFO] live motion start {json.dumps({'diagnostics': diagnostics, 'delta': self.last_start_delta})}"
+        )
+        if delta_reasons:
+            self._reject_active(";".join(delta_reasons))
+            return
+        self._update_record(self.active_record, CommandStatus.EXECUTING)
+        self._set_state(ControllerState.PRE_ALIGN, "ready_and_start_delta_valid")
+
+    def _step_ready(self, contacts: dict[str, float]) -> ControllerOutput:
+        ready_output = self.ready_controller.step()
+        settings = self.config["ready"]
+        limits_key = (
+            "entry_limits" if self.ready_phase == "before_motion" else "exit_limits"
+        )
+        stable_key = (
+            "entry_stable_seconds"
+            if self.ready_phase == "before_motion"
+            else "exit_stable_seconds"
+        )
+        ready, reasons, metrics = self._check_state(contacts, settings[limits_key])
+        self.ready_stable_steps = self.ready_stable_steps + 1 if ready else 0
+        required = self._duration_steps(settings[stable_key])
+        timeout = self._duration_steps(settings["timeout_seconds"])
+        self.state_step += 1
+        if self.ready_stable_steps >= required:
+            self._log_event(
+                "ready_completed",
+                ready_phase=self.ready_phase,
+                ready_controller=self.ready_controller.name,
+                stable_seconds=self.ready_stable_steps * self.control_dt,
+                metrics=metrics,
+            )
+            if self.ready_phase == "before_motion":
+                self._activate_motion_entry()
+            else:
+                self._finish_recovery()
+        elif self.state_step >= timeout:
+            reason = "ready_timeout:" + ",".join(reasons)
+            if self.ready_phase == "before_motion":
+                self._reject_active(reason)
+            else:
+                self._enter_terminal_failure(
+                    reason,
+                    {"ready_phase": self.ready_phase, "metrics": metrics},
+                )
+        return ControllerOutput(
+            ready_output.target,
+            ready_output.observation,
+            ready_output.action,
+            0.0,
+        )
+
     def _step_ready_check(self, contacts: dict[str, float]) -> ControllerOutput:
         target, observation, action = self.walkamp.step()
         settings = self.config["ready_check"]
@@ -805,19 +895,7 @@ class MultiEvt2Controller:
         timeout = self._duration_steps(settings["timeout_seconds"])
         self.state_step += 1
         if self.ready_stable_steps >= required:
-            assert self.active_motion is not None
-            diagnostics = self.active_motion.begin_from_live_state()
-            reference_target = self.active_motion.reference_start_target()
-            self.last_start_delta = self._start_delta(reference_target)
-            delta_reasons = self._validate_start_delta(self.last_start_delta)
-            print(
-                f"[INFO] live motion start {json.dumps({'diagnostics': diagnostics, 'delta': self.last_start_delta})}"
-            )
-            if delta_reasons:
-                self._reject_active(";".join(delta_reasons))
-            else:
-                self._update_record(self.active_record, CommandStatus.EXECUTING)
-                self._set_state(ControllerState.PRE_ALIGN, "ready_and_start_delta_valid")
+            self._activate_motion_entry()
         elif self.state_step >= timeout:
             self._reject_active("ready_timeout:" + ",".join(reasons))
         return ControllerOutput(target, observation, action, 0.0)
@@ -1143,7 +1221,10 @@ class MultiEvt2Controller:
         self.recover_stable_steps = self.recover_stable_steps + 1 if safe else 0
         required = self._duration_steps(settings["stable_seconds"])
         if self.recover_stable_steps >= required:
-            self._finish_recovery()
+            if self.ready_enabled:
+                self._begin_ready("after_motion", "recovery_stable")
+            else:
+                self._finish_recovery()
             return ControllerOutput(target, observation, action, 0.0)
         elif self.state_step >= self._duration_steps(settings["timeout_seconds"]):
             reason = "recover_timeout:" + ",".join(reasons)
@@ -1161,7 +1242,9 @@ class MultiEvt2Controller:
         self.last_contacts = dict(contacts)
         self.walkamp.record_measured_state(self.last_target)
         emergency = self._emergency_reasons()
-        if emergency and self.state not in (
+        if emergency and self.state == ControllerState.READY and self.ready_phase == "after_motion":
+            self._enter_terminal_failure("emergency:" + ",".join(emergency))
+        elif emergency and self.state not in (
             ControllerState.WALKAMP_IDLE,
             ControllerState.TRANSITION_OUT,
             ControllerState.RECOVER,
@@ -1170,6 +1253,8 @@ class MultiEvt2Controller:
 
         if self.state == ControllerState.WALKAMP_IDLE:
             output = self._step_idle()
+        elif self.state == ControllerState.READY:
+            output = self._step_ready(contacts)
         elif self.state == ControllerState.READY_CHECK:
             output = self._step_ready_check(contacts)
         elif self.state == ControllerState.PRE_ALIGN:
@@ -1197,6 +1282,9 @@ class MultiEvt2Controller:
         return {
             "state": self.state.value,
             "busy": self.busy,
+            "ready_enabled": self.ready_enabled,
+            "ready_controller": self.ready_controller.name,
+            "ready_phase": self.ready_phase,
             "entry_mode": self.entry_mode,
             "exit_mode": self.exit_mode,
             "exit_history_mode": self.exit_history_mode,

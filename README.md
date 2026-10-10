@@ -343,6 +343,13 @@ DashScope websocket 超时：检查 API Key、网络、代理和防火墙；先�
 
 实验性 29-DOF 联合配置中机器人倒地：请使用默认的 19-DOF `configs/demo.json` 适配方案；长期实机部署仍建议统一机器人定义后重新训练或微调。
 
+## Phase 3A.4 diagnostics
+
+Phase 3A.4 adds long-window zero-speed and post-action diagnostics, a complete
+step detector, and a disabled-by-default READY controller interface. Results
+and reproduction commands are in
+[docs/STAND_READY_PHASE3A4.md](docs/STAND_READY_PHASE3A4.md).
+
 ## License
 
 源码按 BSD 3-Clause 许可发布。机器人资产和训练权重的来源与再分发注意事项见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

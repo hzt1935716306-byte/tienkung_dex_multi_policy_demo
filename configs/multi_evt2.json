@@ -72,6 +72,29 @@
         "torque_ratio_weight": 0.25
       }
     },
+    "ready": {
+      "enabled": false,
+      "controller": "walkamp_feedback",
+      "entry_stable_seconds": 0.2,
+      "exit_stable_seconds": 0.3,
+      "timeout_seconds": 5.0,
+      "entry_limits": {
+        "minimum_root_height": 0.7,
+        "maximum_abs_roll_pitch": 0.25,
+        "maximum_xy_speed": 0.2,
+        "maximum_angular_speed": 0.5,
+        "maximum_joint_speed": 1.5,
+        "minimum_normal_force": 5.0
+      },
+      "exit_limits": {
+        "minimum_root_height": 0.85,
+        "maximum_abs_roll_pitch": 0.2,
+        "maximum_xy_speed": 0.15,
+        "maximum_angular_speed": 0.4,
+        "maximum_joint_speed": 1.0,
+        "minimum_normal_force": 5.0
+      }
+    },
     "ready_check": {
       "stable_seconds": 0.2,
       "timeout_seconds": 5.0,
@@ -167,6 +190,11 @@
     "realtime": true,
     "max_steps": 100000
   },
+  "stand_diagnostics": {
+    "minimum_flight_seconds": 0.04,
+    "minimum_horizontal_displacement": 0.025,
+    "landing_stable_seconds": 0.04
+  },
   "keyboard": {
     "linear_step": 0.05,
     "lateral_step": 0.05,
@@ -176,6 +204,54 @@
     "idle": {
       "duration_seconds": 6.0,
       "events": []
+    },
+    "stand_zero_30": {
+      "duration_seconds": 32.0,
+      "events": [],
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]}
+      ],
+      "measurement": {
+        "name": "zero_command_30s",
+        "start_time": 2.0,
+        "duration_seconds": 30.0
+      }
+    },
+    "walk_stop_30": {
+      "duration_seconds": 38.0,
+      "events": [],
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.25, 0.0, 0.0]},
+        {"time": 8.0, "command": [0.0, 0.0, 0.0]}
+      ],
+      "measurement": {
+        "name": "after_walk_stop_30s",
+        "start_time": 8.0,
+        "duration_seconds": 30.0
+      }
+    },
+    "wave_return_20": {
+      "duration_seconds": 33.0,
+      "events": [
+        {"time": 2.0, "command": "b"}
+      ],
+      "measurement": {
+        "name": "after_wave_recovery_20s",
+        "start_event": "recovery_completed",
+        "duration_seconds": 20.0
+      }
+    },
+    "bow_return_20": {
+      "duration_seconds": 32.0,
+      "events": [
+        {"time": 2.0, "command": "a"}
+      ],
+      "measurement": {
+        "name": "after_bow_recovery_20s",
+        "start_event": "recovery_completed",
+        "duration_seconds": 20.0
+      }
     },
     "bow": {
       "duration_seconds": 12.0,
