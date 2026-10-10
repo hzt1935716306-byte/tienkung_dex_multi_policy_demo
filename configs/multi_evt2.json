@@ -2,6 +2,14 @@
   "model": "../assets/official_evt2/urdf/evt2.xml",
   "walkamp_config": "walkamp_official.json",
   "command_file": "/tmp/tienkung_dex_commands.jsonl",
+  "status_file": "/tmp/tienkung_dex_command_status.jsonl",
+  "command_ttl_seconds": 15.0,
+  "voice": {
+    "model": "qwen3.5-omni-plus-realtime",
+    "voice": "Liora Mira",
+    "connect_timeout": 30.0,
+    "action_timeout_seconds": 30.0
+  },
   "motion_control": {
     "gain_profile": "training_nominal",
     "preserve_clipped_target_effort": true,
@@ -11,6 +19,7 @@
     "a": {
       "name": "bow",
       "display_name": "bow",
+      "voice_keywords": ["鞠躬", "鞠个躬", "谢谢", "感谢", "问好", "道歉", "对不起"],
       "path": "../policies/bow.onnx",
       "duration_steps": 556,
       "start_step": 0,
@@ -28,6 +37,7 @@
     "b": {
       "name": "right_hand_open",
       "display_name": "wave",
+      "voice_keywords": ["摆手", "挥手", "挥挥手", "欢迎", "再见", "打招呼", "你好"],
       "path": "../policies/right_hand_open.onnx",
       "duration_steps": 685,
       "start_step": 0,
@@ -95,15 +105,28 @@
         "minimum_normal_force": 5.0
       }
     },
+    "brake": {
+      "deceleration": {
+        "vx": 0.4,
+        "vy": 0.35,
+        "yaw": 0.6
+      },
+      "command_zero_epsilon": 0.005,
+      "trigger_maximum_xy_speed": 0.03,
+      "trigger_maximum_angular_speed": 0.08,
+      "trigger_maximum_joint_speed": 0.2,
+      "timeout_seconds": 3.0,
+      "resume_previous_velocity": false
+    },
     "ready_check": {
-      "stable_seconds": 0.2,
-      "timeout_seconds": 5.0,
-      "minimum_root_height": 0.7,
-      "maximum_abs_roll_pitch": 0.25,
-      "maximum_xy_speed": 0.2,
-      "maximum_angular_speed": 0.5,
-      "maximum_joint_speed": 1.5,
-      "minimum_normal_force": 5.0
+      "stable_seconds": 0.3,
+      "timeout_seconds": 6.0,
+      "minimum_root_height": 0.85,
+      "maximum_abs_roll_pitch": 0.12,
+      "maximum_xy_speed": 0.05,
+      "maximum_angular_speed": 0.18,
+      "maximum_joint_speed": 0.35,
+      "minimum_normal_force": 20.0
     },
     "pre_align": {
       "duration_seconds": 0.6,
@@ -252,6 +275,156 @@
         "start_event": "recovery_completed",
         "duration_seconds": 20.0
       }
+    },
+    "moving_forward_bow": {
+      "duration_seconds": 22.0,
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.2, 0.0, 0.0]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "a"}
+      ]
+    },
+    "moving_forward_wave": {
+      "duration_seconds": 24.0,
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.2, 0.0, 0.0]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "b"}
+      ]
+    },
+    "moving_backward_bow": {
+      "duration_seconds": 22.0,
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [-0.15, 0.0, 0.0]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "a"}
+      ]
+    },
+    "moving_lateral_wave": {
+      "duration_seconds": 24.0,
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.0, 0.15, 0.0]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "b"}
+      ]
+    },
+    "moving_turn_bow": {
+      "duration_seconds": 22.0,
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.0, 0.0, 0.2]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "a"}
+      ]
+    },
+    "moving_combined_wave": {
+      "duration_seconds": 24.0,
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.15, 0.08, 0.12]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "b"}
+      ]
+    },
+    "external_forward": {
+      "duration_seconds": 22.0,
+      "allow_external_actions": true,
+      "walk_commands": [
+        {"time": 1.0, "command": [0.15, 0.0, 0.0]}
+      ],
+      "events": []
+    },
+    "zero_command_moving_bow": {
+      "duration_seconds": 22.0,
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.25, 0.0, 0.0]},
+        {"time": 6.0, "command": [0.0, 0.0, 0.0]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "a"}
+      ]
+    },
+    "brake_second_command": {
+      "duration_seconds": 24.0,
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.2, 0.0, 0.0]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "a"},
+        {"time": 6.2, "command": "b"}
+      ],
+      "expected_command_statuses": ["COMPLETED", "REJECTED"]
+    },
+    "brake_cancel": {
+      "duration_seconds": 12.0,
+      "walk_commands": [
+        {"time": 0.0, "command": [0.0, 0.0, 0.0]},
+        {"time": 2.0, "command": [0.2, 0.0, 0.0]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "a"},
+        {"time": 6.2, "command": "r"}
+      ],
+      "expected_command_statuses": ["CANCELLED", "COMPLETED"]
+    },
+    "moving_repeat20": {
+      "duration_seconds": 362.0,
+      "walk_commands": [
+        {"time": 2.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 20.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 38.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 56.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 74.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 92.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 110.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 128.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 146.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 164.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 182.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 200.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 218.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 236.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 254.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 272.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 290.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 308.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 326.0, "command": [0.15, 0.0, 0.0]},
+        {"time": 344.0, "command": [0.15, 0.0, 0.0]}
+      ],
+      "events": [
+        {"time": 6.0, "command": "a"},
+        {"time": 24.0, "command": "b"},
+        {"time": 42.0, "command": "a"},
+        {"time": 60.0, "command": "b"},
+        {"time": 78.0, "command": "a"},
+        {"time": 96.0, "command": "b"},
+        {"time": 114.0, "command": "a"},
+        {"time": 132.0, "command": "b"},
+        {"time": 150.0, "command": "a"},
+        {"time": 168.0, "command": "b"},
+        {"time": 186.0, "command": "a"},
+        {"time": 204.0, "command": "b"},
+        {"time": 222.0, "command": "a"},
+        {"time": 240.0, "command": "b"},
+        {"time": 258.0, "command": "a"},
+        {"time": 276.0, "command": "b"},
+        {"time": 294.0, "command": "a"},
+        {"time": 312.0, "command": "b"},
+        {"time": 330.0, "command": "a"},
+        {"time": 348.0, "command": "b"}
+      ]
     },
     "bow": {
       "duration_seconds": 12.0,

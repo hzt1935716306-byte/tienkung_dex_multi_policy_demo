@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 
-from .command_bus import CommandReader
+from .command_bus import CommandReader, StatusWriter
 from .motion_evt2 import MotionEvt2Policy
 from .motion_evt2_runner import FootContactMonitor
 from .multi_evt2_controller import CommandStatus, ControllerState, MultiEvt2Controller
@@ -208,7 +208,7 @@ class ScheduledCommands:
                 raise RuntimeError(
                     "scheduled WALKAMP command reached while an action is active"
                 )
-            controller.walkamp.set_command(command)
+            controller.set_walk_command(command, "scenario")
             print(
                 "[SCENARIO] WALKAMP command "
                 f"vx={command[0]:.2f} vy={command[1]:.2f} yaw={command[2]:.2f}"
@@ -272,9 +272,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--config", default="configs/multi_evt2.json")
     parser.add_argument("--scenario", default="manual", help="manual or a scenario from the JSON config")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument(
+        "--headless-realtime",
+        action="store_true",
+        help="Pace a headless run in wall-clock time so external commands can arrive",
+    )
     parser.add_argument("--no-realtime", action="store_true")
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--command-file", default="")
+    parser.add_argument("--status-file", default="")
     parser.add_argument("--transition-in", type=float, default=None)
     parser.add_argument("--transition-out", type=float, default=None)
     parser.add_argument(
@@ -339,10 +345,35 @@ def validate_summary(summary: dict[str, Any], config: dict[str, Any]) -> dict[st
             summary["controller"]["state"] == ControllerState.WALKAMP_IDLE.value
         )
     elif scenario != "manual":
+        scenario_config = config["scenarios"][scenario]
+        expected_statuses = scenario_config.get("expected_command_statuses")
+        if expected_statuses is not None:
+            actual_statuses = [record["status"] for record in commands]
+            checks["expected_command_statuses"] = actual_statuses == list(
+                expected_statuses
+            )
+            checks["returned_to_walkamp"] = summary["controller"]["state"] in (
+                ControllerState.WALKAMP_IDLE.value,
+                ControllerState.WALKAMP_MOVING.value,
+            )
+            return checks
+        if bool(scenario_config.get("allow_external_actions", False)):
+            action_records = [
+                record for record in commands if record["action_key"] in ("a", "b")
+            ]
+            checks["external_action_completed"] = bool(action_records) and all(
+                record["status"] == CommandStatus.COMPLETED.value
+                for record in action_records
+            )
+            checks["returned_to_walkamp"] = summary["controller"]["state"] in (
+                ControllerState.WALKAMP_IDLE.value,
+                ControllerState.WALKAMP_MOVING.value,
+            )
+            return checks
         aliases = {"a": "a", "bow": "a", "b": "b", "wave": "b"}
         expected_actions = [
             aliases[str(event.get("command", "")).lower()]
-            for event in config["scenarios"][scenario].get("events", [])
+            for event in scenario_config.get("events", [])
             if str(event.get("command", "")).lower() in aliases
         ]
         completed_actions = [
@@ -494,6 +525,10 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
     keyboard = KeyboardControl(controller, config.get("keyboard", {}))
     command_path = args.command_file or config.get("command_file", "")
     command_reader = CommandReader(command_path)
+    status_path = args.status_file or config.get("status_file", "")
+    status_writer = StatusWriter(status_path)
+    published_command_history = 0
+    request_metadata: dict[str, dict[str, Any]] = {}
 
     schedule = (
         None
@@ -561,6 +596,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
     print(f"[INFO] model: {config['model']}")
     print("[INFO] default controller: WALKAMP; actions are command-triggered only")
     print(f"[INFO] command bus: {command_path or 'disabled'}")
+    print(f"[INFO] status bus: {status_path or 'disabled'}")
     if not args.headless:
         print("[INFO] controls: W/S/A/D/Q/E walk, Space stop, J bow, K wave, R recover, Esc quit")
 
@@ -575,14 +611,48 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         nonlocal transition_out_maximum_torque_rate, transition_out_maximum_abs_torque
         nonlocal transition_out_saturation_sum, transition_out_samples
         nonlocal previous_joint_velocity, previous_exit_support
+        nonlocal published_command_history
+
+        def publish_statuses() -> None:
+            nonlocal published_command_history
+            while published_command_history < len(controller.command_history):
+                payload = dict(controller.command_history[published_command_history])
+                metadata = request_metadata.get(str(payload.get("request_id", "")), {})
+                status_writer.send(
+                    {
+                        **payload,
+                        **metadata,
+                        "controller_step": controller.global_step,
+                        "simulation_time": controller.global_step * control_dt,
+                    }
+                )
+                published_command_history += 1
 
         if schedule is not None:
+            schedule.apply_walk_commands(step, controller)
             for command in schedule.commands(step):
                 controller.request_command(command, f"scenario:{args.scenario}")
-            schedule.apply_walk_commands(step, controller)
             schedule.apply_perturbations(step, data)
-        for command, source in command_reader.read():
-            controller.request_command(command, source)
+        for envelope in command_reader.read_records():
+            request_metadata[envelope.request_id] = {
+                "label": envelope.label,
+                "request_issued_at": envelope.issued_at,
+                "controller_received_at": time.time(),
+            }
+            if envelope.expired:
+                controller.reject_command(
+                    envelope.command,
+                    envelope.source,
+                    envelope.request_id,
+                    "expired_command",
+                )
+            else:
+                controller.request_command(
+                    envelope.command,
+                    envelope.source,
+                    envelope.request_id,
+                )
+        publish_statuses()
 
         contacts = contact_monitor.measure(data)
         state_before_control = controller.state
@@ -592,6 +662,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         previous_target = copy_target(controller.last_target, "previous_applied")
         previous_torque = pd.previous_torque.copy()
         output = controller.step(contacts)
+        publish_statuses()
         raw_target = controller.last_raw_target
         torque_result = None
         for _ in range(substeps):
@@ -1036,8 +1107,13 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
     try:
         if args.headless:
             for step in range(max_steps):
+                started = time.perf_counter()
                 if not step_once(step):
                     break
+                if args.headless_realtime:
+                    delay = control_dt - (time.perf_counter() - started)
+                    if delay > 0.0:
+                        time.sleep(delay)
         else:
             import mujoco.viewer
 

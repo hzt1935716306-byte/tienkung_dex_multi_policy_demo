@@ -28,6 +28,8 @@ from .walkamp_runner import quaternion_to_rpy
 
 class ControllerState(str, Enum):
     WALKAMP_IDLE = "WALKAMP_IDLE"
+    WALKAMP_MOVING = "WALKAMP_MOVING"
+    BRAKE = "BRAKE"
     READY = "READY"
     READY_CHECK = "READY_CHECK"
     PRE_ALIGN = "PRE_ALIGN"
@@ -41,15 +43,19 @@ class ControllerState(str, Enum):
 class CommandStatus(str, Enum):
     RECEIVED = "RECEIVED"
     ACCEPTED = "ACCEPTED"
+    BRAKING = "BRAKING"
+    WAITING_FOR_READY = "WAITING_FOR_READY"
     EXECUTING = "EXECUTING"
     COMPLETED = "COMPLETED"
     REJECTED = "REJECTED"
+    CANCELLED = "CANCELLED"
     FAILED = "FAILED"
 
 
 @dataclass
 class CommandRecord:
     command_id: int
+    request_id: str
     command: str
     action_key: str | None
     source: str
@@ -103,7 +109,16 @@ class MultiEvt2Controller:
         self.active_record: CommandRecord | None = None
         self.abort_record: CommandRecord | None = None
         self.command_records: list[CommandRecord] = []
+        self.command_history: list[dict[str, Any]] = []
+        self.command_by_request_id: dict[str, CommandRecord] = {}
         self.next_command_id = 1
+        brake_config = config.get("brake", {})
+        self.brake_command_epsilon = float(
+            brake_config.get("command_zero_epsilon", 0.005)
+        )
+        self.saved_walk_command = np.zeros(3, dtype=np.float32)
+        self.brake_start_xy = np.zeros(2, dtype=np.float64)
+        self.last_brake: dict[str, Any] = {}
         self.ready_stable_steps = 0
         ready_config = config.get("ready", {})
         self.ready_enabled = bool(ready_config.get("enabled", False))
@@ -177,7 +192,10 @@ class MultiEvt2Controller:
 
     @property
     def busy(self) -> bool:
-        return self.state != ControllerState.WALKAMP_IDLE
+        return self.state not in (
+            ControllerState.WALKAMP_IDLE,
+            ControllerState.WALKAMP_MOVING,
+        )
 
     def _duration_steps(self, seconds: float) -> int:
         return max(1, int(round(float(seconds) / self.control_dt)))
@@ -205,9 +223,17 @@ class MultiEvt2Controller:
         self.event_history.append(payload)
         print(f"[EVENT] {json.dumps(payload, ensure_ascii=True)}")
 
-    def _new_record(self, command: str, action_key: str | None, source: str) -> CommandRecord:
+    def _new_record(
+        self,
+        command: str,
+        action_key: str | None,
+        source: str,
+        request_id: str | None = None,
+    ) -> CommandRecord:
+        resolved_request_id = request_id or f"controller-{self.next_command_id}"
         record = CommandRecord(
             command_id=self.next_command_id,
+            request_id=resolved_request_id,
             command=command,
             action_key=action_key,
             source=source,
@@ -217,11 +243,14 @@ class MultiEvt2Controller:
         )
         self.next_command_id += 1
         self.command_records.append(record)
+        self.command_by_request_id[resolved_request_id] = record
         self._log_command(record)
         return record
 
     def _log_command(self, record: CommandRecord) -> None:
-        print(f"[COMMAND] {json.dumps(asdict(record), ensure_ascii=True)}")
+        payload = asdict(record)
+        self.command_history.append(payload)
+        print(f"[COMMAND] {json.dumps(payload, ensure_ascii=True)}")
 
     def _update_record(
         self,
@@ -236,13 +265,94 @@ class MultiEvt2Controller:
         record.reason = reason
         self._log_command(record)
 
-    def request_command(self, command: str, source: str = "external") -> CommandRecord:
+    def _walk_command_is_zero(self) -> bool:
+        return bool(np.max(np.abs(self.walkamp.command)) <= self.brake_command_epsilon)
+
+    def _sync_walkamp_state(self, reason: str) -> None:
+        state = (
+            ControllerState.WALKAMP_IDLE
+            if self._walk_command_is_zero()
+            else ControllerState.WALKAMP_MOVING
+        )
+        if self.state != state:
+            self._set_state(state, reason)
+
+    def _live_state_requires_brake(self) -> bool:
+        settings = self.config["brake"]
+        angular_velocity = self.data.sensor("angular-velocity").data.copy()
+        joint_velocity = self.data.qvel[self.joint_map.qvel_adr]
+        return bool(
+            not self._walk_command_is_zero()
+            or np.linalg.norm(self.data.qvel[0:2])
+            > float(settings["trigger_maximum_xy_speed"])
+            or np.linalg.norm(angular_velocity)
+            > float(settings["trigger_maximum_angular_speed"])
+            or np.max(np.abs(joint_velocity))
+            > float(settings["trigger_maximum_joint_speed"])
+        )
+
+    def _begin_brake(self) -> None:
+        self.saved_walk_command = self.walkamp.command.copy()
+        self.brake_start_xy = self.data.qpos[0:2].copy()
+        self.last_brake = {
+            "started_step": self.global_step,
+            "initial_command": self.saved_walk_command.tolist(),
+            "brake_required": True,
+        }
+        self._update_record(self.active_record, CommandStatus.BRAKING)
+        self._set_state(ControllerState.BRAKE, "action_requested_while_moving")
+        self._log_event(
+            "brake_started",
+            initial_command=self.saved_walk_command.tolist(),
+            metrics=self._state_metrics(self.last_contacts),
+        )
+
+    def _fail_pending_action(self, reason: str) -> None:
+        self._update_record(self.active_record, CommandStatus.FAILED, reason)
+        self._log_event(
+            "pending_action_failed",
+            reason=reason,
+            metrics=self._state_metrics(self.last_contacts),
+        )
+        self.active_record = None
+        self.active_motion = None
+        self.active_key = None
+        self.abort_pending = False
+        self.ready_stable_steps = 0
+        self.walkamp.set_command((0.0, 0.0, 0.0))
+        self._sync_walkamp_state(f"pending_action_failed:{reason}")
+
+    def _cancel_pending_action(self, reason: str) -> None:
+        self._update_record(self.active_record, CommandStatus.CANCELLED, reason)
+        self._log_event(
+            "pending_action_cancelled",
+            reason=reason,
+            metrics=self._state_metrics(self.last_contacts),
+        )
+        self.active_record = None
+        self.active_motion = None
+        self.active_key = None
+        self.abort_pending = False
+        self.ready_stable_steps = 0
+        self.walkamp.set_command((0.0, 0.0, 0.0))
+        self._sync_walkamp_state(f"pending_action_cancelled:{reason}")
+
+    def request_command(
+        self,
+        command: str,
+        source: str = "external",
+        request_id: str | None = None,
+    ) -> CommandRecord:
         normalized = command.strip().lower()
+        if request_id and request_id in self.command_by_request_id:
+            record = self.command_by_request_id[request_id]
+            self._log_command(record)
+            return record
         if normalized == "r":
-            return self._request_abort(source)
+            return self._request_abort(source, request_id)
 
         action_key = ACTION_ALIASES.get(normalized)
-        record = self._new_record(normalized, action_key, source)
+        record = self._new_record(normalized, action_key, source, request_id)
         if action_key is None or action_key not in self.motions:
             self._update_record(record, CommandStatus.REJECTED, "unsupported_action")
             return record
@@ -250,7 +360,6 @@ class MultiEvt2Controller:
             self._update_record(record, CommandStatus.REJECTED, f"controller_busy:{self.state.value}")
             return record
 
-        self.walkamp.set_command((0.0, 0.0, 0.0))
         self.active_key = action_key
         self.active_motion = self.motions[action_key]
         self.active_record = record
@@ -268,15 +377,61 @@ class MultiEvt2Controller:
         self.exit_source_start = None
         self.last_exit_previews = []
         self.selected_exit_preview = {}
+        self.saved_walk_command = self.walkamp.command.copy()
+        self.brake_start_xy = self.data.qpos[0:2].copy()
+        self.last_brake = {
+            "started_step": self.global_step,
+            "initial_command": self.saved_walk_command.tolist(),
+            "brake_required": False,
+        }
         self._update_record(record, CommandStatus.ACCEPTED)
-        if self.ready_enabled:
+        if self._live_state_requires_brake():
+            self._begin_brake()
+        elif self.ready_enabled:
+            self.walkamp.set_command((0.0, 0.0, 0.0))
+            self._update_record(record, CommandStatus.WAITING_FOR_READY)
             self._begin_ready("before_motion", f"accepted:{action_key}")
         else:
+            self.walkamp.set_command((0.0, 0.0, 0.0))
+            self._update_record(record, CommandStatus.WAITING_FOR_READY)
             self._set_state(ControllerState.READY_CHECK, f"accepted:{action_key}")
         return record
 
-    def _request_abort(self, source: str) -> CommandRecord:
-        record = self._new_record("r", None, source)
+    def reject_command(
+        self,
+        command: str,
+        source: str,
+        request_id: str | None,
+        reason: str,
+    ) -> CommandRecord:
+        normalized = command.strip().lower()
+        if request_id and request_id in self.command_by_request_id:
+            record = self.command_by_request_id[request_id]
+            self._log_command(record)
+            return record
+        record = self._new_record(
+            normalized,
+            ACTION_ALIASES.get(normalized),
+            source,
+            request_id,
+        )
+        self._update_record(record, CommandStatus.REJECTED, reason)
+        return record
+
+    def _request_abort(
+        self,
+        source: str,
+        request_id: str | None = None,
+    ) -> CommandRecord:
+        record = self._new_record("r", None, source, request_id)
+        if self.state in (ControllerState.BRAKE, ControllerState.READY_CHECK) or (
+            self.state == ControllerState.READY
+            and self.ready_phase == "before_motion"
+        ):
+            self._update_record(record, CommandStatus.ACCEPTED)
+            self._cancel_pending_action("cancelled_before_motion")
+            self._update_record(record, CommandStatus.COMPLETED, "pending_action_cancelled")
+            return record
         if not self.busy or self.state in (
             ControllerState.TRANSITION_OUT,
             ControllerState.RECOVER,
@@ -300,12 +455,30 @@ class MultiEvt2Controller:
             print(f"[WARN] walk command ignored while state={self.state.value} source={source}")
             return
         self.walkamp.adjust_command(index, amount)
+        self._sync_walkamp_state(f"walk_command_adjusted:{source}")
+
+    def set_walk_command(
+        self,
+        command: np.ndarray | list[float] | tuple[float, float, float],
+        source: str = "external",
+    ) -> None:
+        if self.busy:
+            raise RuntimeError(
+                f"walk command rejected while state={self.state.value} source={source}"
+            )
+        self.walkamp.set_command(command)
+        self._sync_walkamp_state(f"walk_command_set:{source}")
 
     def stop_walk(self, source: str = "keyboard") -> None:
+        if self.state == ControllerState.BRAKE:
+            self.walkamp.set_command((0.0, 0.0, 0.0))
+            print(f"[INFO] BRAKE command forced to zero ({source})")
+            return
         if self.busy:
             print(f"[WARN] stop command ignored while state={self.state.value} source={source}")
             return
         self.walkamp.set_command((0.0, 0.0, 0.0))
+        self._sync_walkamp_state(f"walk_command_stopped:{source}")
         print(f"[INFO] WALKAMP command stopped ({source})")
 
     def _state_metrics(self, contacts: dict[str, float]) -> dict[str, float]:
@@ -812,6 +985,56 @@ class MultiEvt2Controller:
         target, observation, action = self.walkamp.step()
         return ControllerOutput(target, observation, action, 0.0)
 
+    def _step_brake(self) -> ControllerOutput:
+        settings = self.config["brake"]
+        rates = np.asarray(
+            [
+                settings["deceleration"]["vx"],
+                settings["deceleration"]["vy"],
+                settings["deceleration"]["yaw"],
+            ],
+            dtype=np.float32,
+        )
+        command = self.walkamp.command.copy()
+        command = np.sign(command) * np.maximum(
+            np.abs(command) - rates * self.control_dt,
+            0.0,
+        )
+        self.walkamp.set_command(command)
+        target, observation, action = self.walkamp.step()
+        self.state_step += 1
+        if self._walk_command_is_zero():
+            self.walkamp.set_command((0.0, 0.0, 0.0))
+            displacement = float(
+                np.linalg.norm(self.data.qpos[0:2] - self.brake_start_xy)
+            )
+            self.last_brake.update(
+                {
+                    "command_zero_step": self.global_step,
+                    "command_ramp_seconds": self.state_step * self.control_dt,
+                    "command_ramp_distance": displacement,
+                }
+            )
+            self._log_event(
+                "brake_command_zero",
+                command_ramp_seconds=self.state_step * self.control_dt,
+                command_ramp_distance=displacement,
+                metrics=self._state_metrics(self.last_contacts),
+            )
+            self._update_record(
+                self.active_record,
+                CommandStatus.WAITING_FOR_READY,
+                "command_zero_waiting_for_actual_stop",
+            )
+            self.ready_stable_steps = 0
+            self._set_state(
+                ControllerState.READY_CHECK,
+                "brake_command_zero_wait_for_actual_stop",
+            )
+        elif self.state_step >= self._duration_steps(settings["timeout_seconds"]):
+            self._fail_pending_action("brake_timeout")
+        return ControllerOutput(target, observation, action, 0.0)
+
     def _begin_ready(self, phase: str, reason: str) -> None:
         if phase not in ("before_motion", "after_motion"):
             raise ValueError(f"Unknown READY phase {phase!r}")
@@ -839,6 +1062,25 @@ class MultiEvt2Controller:
         if delta_reasons:
             self._reject_active(";".join(delta_reasons))
             return
+        brake_distance = float(np.linalg.norm(self.data.qpos[0:2] - self.brake_start_xy))
+        self.last_brake.update(
+            {
+                "ready_step": self.global_step,
+                "request_to_ready_seconds": (
+                    self.global_step - int(self.last_brake.get("started_step", self.global_step))
+                )
+                * self.control_dt,
+                "request_to_ready_distance": brake_distance,
+            }
+        )
+        self._log_event(
+            "ready_for_motion",
+            request_to_ready_seconds=self.last_brake.get(
+                "request_to_ready_seconds", 0.0
+            ),
+            request_to_ready_distance=brake_distance,
+            metrics=self._state_metrics(self.last_contacts),
+        )
         self._update_record(self.active_record, CommandStatus.EXECUTING)
         self._set_state(ControllerState.PRE_ALIGN, "ready_and_start_delta_valid")
 
@@ -897,7 +1139,7 @@ class MultiEvt2Controller:
         if self.ready_stable_steps >= required:
             self._activate_motion_entry()
         elif self.state_step >= timeout:
-            self._reject_active("ready_timeout:" + ",".join(reasons))
+            self._fail_pending_action("ready_timeout:" + ",".join(reasons))
         return ControllerOutput(target, observation, action, 0.0)
 
     def _step_pre_align(self, contacts: dict[str, float]) -> ControllerOutput:
@@ -1242,10 +1484,16 @@ class MultiEvt2Controller:
         self.last_contacts = dict(contacts)
         self.walkamp.record_measured_state(self.last_target)
         emergency = self._emergency_reasons()
-        if emergency and self.state == ControllerState.READY and self.ready_phase == "after_motion":
+        if emergency and self.state in (
+            ControllerState.BRAKE,
+            ControllerState.READY_CHECK,
+        ):
+            self._fail_pending_action("emergency:" + ",".join(emergency))
+        elif emergency and self.state == ControllerState.READY and self.ready_phase == "after_motion":
             self._enter_terminal_failure("emergency:" + ",".join(emergency))
         elif emergency and self.state not in (
             ControllerState.WALKAMP_IDLE,
+            ControllerState.WALKAMP_MOVING,
             ControllerState.TRANSITION_OUT,
             ControllerState.RECOVER,
         ):
@@ -1253,6 +1501,10 @@ class MultiEvt2Controller:
 
         if self.state == ControllerState.WALKAMP_IDLE:
             output = self._step_idle()
+        elif self.state == ControllerState.WALKAMP_MOVING:
+            output = self._step_idle()
+        elif self.state == ControllerState.BRAKE:
+            output = self._step_brake()
         elif self.state == ControllerState.READY:
             output = self._step_ready(contacts)
         elif self.state == ControllerState.READY_CHECK:
@@ -1285,6 +1537,8 @@ class MultiEvt2Controller:
             "ready_enabled": self.ready_enabled,
             "ready_controller": self.ready_controller.name,
             "ready_phase": self.ready_phase,
+            "saved_walk_command": self.saved_walk_command.tolist(),
+            "last_brake": self.last_brake,
             "entry_mode": self.entry_mode,
             "exit_mode": self.exit_mode,
             "exit_history_mode": self.exit_history_mode,
@@ -1300,4 +1554,5 @@ class MultiEvt2Controller:
             "state_history": self.state_history,
             "events": self.event_history,
             "commands": [asdict(record) for record in self.command_records],
+            "command_history": self.command_history,
         }

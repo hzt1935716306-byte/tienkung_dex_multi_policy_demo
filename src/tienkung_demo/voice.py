@@ -6,56 +6,108 @@ import queue
 import re
 import threading
 import time
+import uuid
 from typing import Any
 
-from .command_bus import CommandWriter
+from .command_bus import CommandWriter, StatusReader
 
 
 class ActionManager:
-    def __init__(self, config: dict[str, Any], writer=None):
+    def __init__(self, config: dict[str, Any], writer=None, status_reader=None):
         self.config = config
         self.command_file = config.get("command_file", "/tmp/tienkung_dex_commands.jsonl")
         self.writer = writer or CommandWriter(self.command_file, source="voice")
-        self.control_dt = float(config.get("simulation", {}).get("control_dt", 0.01))
-        simulation = config.get("simulation", {})
-        self.transition_time = float(simulation.get("transition_time", 0.5))
-        self.return_time = float(simulation.get("return_walk_time", 0.5))
-        if bool(simulation.get("return_via_motion_start", False)):
-            self.return_time += float(simulation.get("return_neutral_time", 0.5))
-            self.return_time += float(simulation.get("return_neutral_hold", 0.5))
-        self.return_delay = float(config.get("voice", {}).get("return_delay", 0.5))
-        self.queue: queue.Queue[str] = queue.Queue()
+        self.status_reader = status_reader or StatusReader(config.get("status_file"))
+        self.action_timeout = float(
+            config.get("voice", {}).get("action_timeout_seconds", 30.0)
+        )
+        self.command_ttl = float(config.get("command_ttl_seconds", 15.0))
+        self.queue: queue.Queue[tuple[str, str]] = queue.Queue(maxsize=1)
+        self.results: dict[str, dict[str, Any]] = {}
+        self.result_events: dict[str, threading.Event] = {}
         self.running = True
         self.worker = threading.Thread(target=self._run, daemon=True)
         self.worker.start()
 
-    def trigger(self, key: str) -> None:
+    def trigger(self, key: str) -> str | None:
         key = key.lower()
         if key not in self.config["motions"]:
-            return
-        self.queue.put(key)
-        print(f"[ACTION] queued {key}: {self.config['motions'][key]['display_name']}")
+            return None
+        request_id = uuid.uuid4().hex
+        self.result_events[request_id] = threading.Event()
+        try:
+            self.queue.put_nowait((key, request_id))
+        except queue.Full:
+            self.result_events.pop(request_id, None)
+            print(f"[ACTION] rejected locally: another voice action is pending ({key})")
+            return None
+        print(
+            f"[ACTION] queued {key}: {self.config['motions'][key]['display_name']} "
+            f"request_id={request_id}"
+        )
+        return request_id
 
-    def _wait(self, duration: float) -> None:
-        deadline = time.monotonic() + duration
-        while self.running and time.monotonic() < deadline:
-            time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+    def wait(self, request_id: str, timeout: float | None = None) -> dict[str, Any] | None:
+        event = self.result_events.get(request_id)
+        if event is None:
+            return None
+        if not event.wait(self.action_timeout if timeout is None else timeout):
+            return None
+        return self.results.get(request_id)
 
     def _run(self) -> None:
         while self.running:
             try:
-                key = self.queue.get(timeout=0.2)
+                key, request_id = self.queue.get(timeout=0.2)
             except queue.Empty:
                 continue
             motion = self.config["motions"][key]
             try:
-                self.writer.send(key, motion["display_name"])
-                duration = float(motion["duration_steps"]) * self.control_dt
-                print(f"[ACTION] sent {key}, waiting {duration:.2f}s for motion completion")
-                self._wait(duration + self.transition_time + self.return_time + self.return_delay)
+                sent_id = self.writer.send(
+                    key,
+                    motion["display_name"],
+                    request_id=request_id,
+                    ttl_seconds=self.command_ttl,
+                )
+                print(
+                    f"[ACTION] sent {key}, waiting for controller status "
+                    f"request_id={sent_id}"
+                )
+                result = self.status_reader.wait_for_terminal(
+                    sent_id,
+                    timeout=self.action_timeout,
+                )
+                if result is None or result.get("status") not in (
+                    "COMPLETED",
+                    "REJECTED",
+                    "FAILED",
+                    "CANCELLED",
+                ):
+                    print(
+                        f"[ACTION TIMEOUT] no terminal controller status for "
+                        f"request_id={sent_id}"
+                    )
+                    self.results[request_id] = {
+                        "request_id": request_id,
+                        "status": "TIMEOUT",
+                    }
+                else:
+                    self.results[request_id] = result
+                    print(
+                        f"[ACTION RESULT] request_id={sent_id} "
+                        f"status={result['status']} reason={result.get('reason', '')}"
+                    )
             except Exception as exc:
+                self.results[request_id] = {
+                    "request_id": request_id,
+                    "status": "FAILED",
+                    "reason": str(exc),
+                }
                 print(f"[ACTION ERROR] failed to send {key}: {exc}")
             finally:
+                event = self.result_events.get(request_id)
+                if event is not None:
+                    event.set()
                 self.queue.task_done()
 
     def stop(self) -> None:
@@ -73,8 +125,8 @@ def infer_text_actions(text: str, config: dict[str, Any]) -> list[str]:
     return matches
 
 
-def run_text_demo(config: dict[str, Any], writer=None) -> None:
-    actions = ActionManager(config, writer)
+def run_text_demo(config: dict[str, Any], writer=None, status_reader=None) -> None:
+    actions = ActionManager(config, writer, status_reader)
     examples = " / ".join(motion["voice_keywords"][0] for motion in config["motions"].values())
     print(f"[TEXT] 输入动作描述（例如：{examples}），或直接输入动作键。输入 q 退出。")
     try:
@@ -134,7 +186,12 @@ def connect_conversation(conversation, timeout: float) -> None:
     raise TimeoutError(f"DashScope websocket did not connect within {timeout:.1f}s")
 
 
-def run_voice_demo(config: dict[str, Any], mic_device: int | None = None, writer=None) -> None:
+def run_voice_demo(
+    config: dict[str, Any],
+    mic_device: int | None = None,
+    writer=None,
+    status_reader=None,
+) -> None:
     api_key = os.environ.get("DASHSCOPE_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError('请先设置环境变量：export DASHSCOPE_API_KEY="你的 DashScope API Key"')
@@ -153,7 +210,7 @@ def run_voice_demo(config: dict[str, Any], mic_device: int | None = None, writer
 
     dashscope.api_key = api_key
     voice_config = config.get("voice", {})
-    actions = ActionManager(config, writer)
+    actions = ActionManager(config, writer, status_reader)
 
     class Callback(OmniRealtimeCallback):
         def __init__(self, audio):

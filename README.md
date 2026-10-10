@@ -11,7 +11,7 @@
 | `configs/unified_experimental.json` | Dex EVT，29 DOF | 单窗口尝试同时加载行走和动作 | 不稳定，仅供诊断 |
 | `configs/walkamp_official.json` | 官方 xSIM EVT2，完整 29 关节 | 独立运行官方 WALKAMP 840→23 行走策略 | 四场景无头测试通过 |
 | `configs/motion_evt2.json` | 官方 xSIM EVT2，完整 29 关节 | 独立运行 BeyondMimic 104→19 鞠躬/摊手策略 | 两个真实策略完整轨迹通过 |
-| `configs/multi_evt2.json` | 官方 xSIM EVT2，完整 29 关节 | 同一窗口运行 WALKAMP，并按指令平滑切换鞠躬/摆手 | idle/bow/wave/abort 无头测试通过 |
+| `configs/multi_evt2.json` | 官方 xSIM EVT2，完整 29 关节 | WALKAMP 行走中接收指令，自动刹停并平滑执行鞠躬/摆手 | 方向/边界场景及连续 20 次无重置测试通过 |
 
 重要：旧 `configs/demo.json` 仍保留原来的 19-DOF 兼容方案。新的 `configs/multi_evt2.json` 使用官方完整 EVT2 模型，WALKAMP 输出 23 维、BeyondMimic 输出 19 维，两者先按关节名称映射为统一 29 关节物理目标后再交接。MuJoCo 验证通过不等于已完成实机安全认证。
 
@@ -349,6 +349,33 @@ Phase 3A.4 adds long-window zero-speed and post-action diagnostics, a complete
 step detector, and a disabled-by-default READY controller interface. Results
 and reproduction commands are in
 [docs/STAND_READY_PHASE3A4.md](docs/STAND_READY_PHASE3A4.md).
+
+## Phase 3B 行走中触发与语音状态回传
+
+WALKAMP 行走时收到 `J/K`、`a/b` 或语音动作请求后，会继续用 WALKAMP
+闭环按轴限速减速。速度命令归零后还会检查机器人实际速度、姿态、双足支撑和
+关节速度，连续停稳后才进入原有平滑动作切换。动作完成后默认返回 WALKAMP
+零速度，不自动恢复此前行走速度。
+
+```bash
+python run_multi_evt2.py --config configs/multi_evt2.json
+python scripts/voice_control.py --config configs/multi_evt2.json --text
+```
+
+语音命令现在使用唯一 `request_id` 和独立状态文件，按控制器实际
+`COMPLETED/REJECTED/FAILED/CANCELLED` 结果反馈，不再按动作时长猜测完成。
+完整无头套件和文本端到端测试：
+
+```bash
+python scripts/run_walk_command_suite.py --config configs/multi_evt2.json
+python scripts/run_voice_text_integration.py --config configs/multi_evt2.json
+```
+
+Phase 3B.1 的 9 个方向/边界场景全部通过；同一 MuJoCo 状态下连续 20 次
+行走、刹停、动作和恢复为 20/20 成功。中文文本鞠躬、摆手链路均通过。
+真实 DashScope 麦克风测试仍受当前云端 WebSocket/凭据环境阻塞，未标记为
+通过。实现、参数、结果和远程 SSH 命令见
+[Phase 3B 文档](docs/WALK_COMMAND_VOICE_PHASE3B.md)。
 
 ## License
 

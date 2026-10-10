@@ -1,0 +1,47 @@
+{
+  "branch": "feature/walk-command-voice-phase3b",
+  "walk_command_suite": {
+    "passed": true,
+    "short_scenarios_passed": 9,
+    "short_scenarios_total": 9,
+    "repeat20": {
+      "passed": true,
+      "physical_resets": 0,
+      "completed_actions": 20,
+      "failed_actions": 0,
+      "mean_stop_time_seconds": 1.0675,
+      "maximum_stop_time_seconds": 1.1,
+      "mean_stop_distance_m": 0.035263,
+      "maximum_stop_distance_m": 0.035635,
+      "minimum_root_height_m": 0.945634,
+      "maximum_com_speed_mps": 0.28771,
+      "maximum_applied_target_delta_rad": 0.08,
+      "maximum_torque_rate_nmps": 3429.958352,
+      "maximum_abs_torque_nm": 143.831433,
+      "torque_saturation_rate": 0.0
+    },
+    "forward_0_2_mps": {
+      "request_to_ready_seconds": 2.78,
+      "request_to_ready_distance_m": 0.461149
+    }
+  },
+  "text_integration": {
+    "passed": true,
+    "bow": {
+      "phrase": "请鞠个躬",
+      "status": "COMPLETED",
+      "transport_delay_seconds": 0.003416
+    },
+    "wave": {
+      "phrase": "向我挥挥手",
+      "status": "COMPLETED",
+      "transport_delay_seconds": 0.00252
+    }
+  },
+  "real_voice": {
+    "passed": false,
+    "dependencies_installed": true,
+    "microphone_detected": true,
+    "blocker": "DashScope WebSocket closed before connected callback; no explicit API key in current shell"
+  }
+}

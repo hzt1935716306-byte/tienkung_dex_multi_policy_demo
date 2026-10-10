@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -13,6 +15,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from tienkung_demo.motion_evt2 import MotionEvt2Policy
+from tienkung_demo.command_bus import CommandReader, CommandWriter, StatusReader, StatusWriter
 from tienkung_demo.multi_evt2_controller import (
     CommandStatus,
     ControllerState,
@@ -478,12 +481,68 @@ class MultiEvt2Tests(unittest.TestCase):
         self.assertEqual(controller.state, ControllerState.WALKAMP_IDLE)
 
         accepted = controller.request_command("bow", "test")
-        self.assertEqual(accepted.status, CommandStatus.ACCEPTED.value)
+        self.assertEqual(accepted.status, CommandStatus.WAITING_FOR_READY.value)
         self.assertEqual(controller.state, ControllerState.READY_CHECK)
+        accepted_history = [
+            item["status"]
+            for item in controller.command_history
+            if item["command_id"] == accepted.command_id
+        ]
+        self.assertEqual(
+            accepted_history,
+            [
+                CommandStatus.RECEIVED.value,
+                CommandStatus.ACCEPTED.value,
+                CommandStatus.WAITING_FOR_READY.value,
+            ],
+        )
 
         busy = controller.request_command("wave", "test")
         self.assertEqual(busy.status, CommandStatus.REJECTED.value)
         self.assertIn("controller_busy", busy.reason)
+
+    def test_moving_action_brakes_with_independent_rate_limit(self) -> None:
+        _, walkamp, _, controller = self.build_stack()
+        controller.set_walk_command((0.2, -0.1, 0.12), "test")
+        self.assertEqual(controller.state, ControllerState.WALKAMP_MOVING)
+
+        record = controller.request_command("bow", "test", "moving-request")
+        self.assertEqual(record.status, CommandStatus.BRAKING.value)
+        self.assertEqual(controller.state, ControllerState.BRAKE)
+        before = walkamp.command.copy()
+        controller._step_brake()
+        after = walkamp.command.copy()
+        expected_delta = np.array([0.4, 0.35, 0.6]) * controller.control_dt
+        np.testing.assert_allclose(
+            np.abs(before) - np.abs(after),
+            expected_delta,
+            atol=1.0e-6,
+        )
+
+    def test_zero_command_with_live_motion_still_enters_brake(self) -> None:
+        data, _, _, controller = self.build_stack()
+        data.qvel[0] = 0.1
+        record = controller.request_command("wave", "test")
+        self.assertEqual(record.status, CommandStatus.BRAKING.value)
+        self.assertEqual(controller.state, ControllerState.BRAKE)
+
+    def test_brake_cancel_keeps_walkamp_feedback_and_marks_cancelled(self) -> None:
+        _, walkamp, _, controller = self.build_stack()
+        controller.set_walk_command((0.2, 0.0, 0.0), "test")
+        action = controller.request_command("bow", "test")
+        abort = controller.request_command("r", "test")
+
+        self.assertEqual(action.status, CommandStatus.CANCELLED.value)
+        self.assertEqual(abort.status, CommandStatus.COMPLETED.value)
+        self.assertEqual(controller.state, ControllerState.WALKAMP_IDLE)
+        np.testing.assert_array_equal(walkamp.command, np.zeros(3))
+
+    def test_external_request_id_is_idempotent(self) -> None:
+        _, _, _, controller = self.build_stack()
+        first = controller.request_command("bow", "voice", "same-request")
+        duplicate = controller.request_command("bow", "voice", "same-request")
+        self.assertIs(first, duplicate)
+        self.assertEqual(len(controller.command_records), 1)
 
     def test_each_cycle_returns_one_finite_29_joint_target(self) -> None:
         _, _, _, controller = self.build_stack()
@@ -499,6 +558,34 @@ class MultiEvt2Tests(unittest.TestCase):
         self.assertTrue(np.all(np.isfinite(output.target.q)))
         self.assertTrue(np.all(np.isfinite(output.target.kp)))
         self.assertTrue(np.all(np.isfinite(output.target.kd)))
+
+
+class CommandBusTests(unittest.TestCase):
+    def test_command_envelope_expiry_and_status_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            command_path = Path(directory) / "commands.jsonl"
+            status_path = Path(directory) / "status.jsonl"
+            reader = CommandReader(command_path)
+            writer = CommandWriter(command_path, source="test")
+            request_id = writer.send("bow", "test bow", ttl_seconds=10.0)
+            records = reader.read_records()
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0].request_id, request_id)
+            self.assertEqual(records[0].command, "bow")
+            self.assertFalse(records[0].expired)
+
+            status_reader = StatusReader(status_path)
+            status_writer = StatusWriter(status_path)
+            status_writer.send({"request_id": request_id, "status": "COMPLETED"})
+            terminal = status_reader.wait_for_terminal(request_id, timeout=0.2)
+            self.assertIsNotNone(terminal)
+            self.assertEqual(terminal["status"], "COMPLETED")
+
+            expired_id = writer.send("wave", ttl_seconds=0.0)
+            time.sleep(0.001)
+            expired = reader.read_records()
+            self.assertEqual(expired[0].request_id, expired_id)
+            self.assertTrue(expired[0].expired)
 
 
 if __name__ == "__main__":
