@@ -2,6 +2,23 @@
 
 这是一个可独立运行、可直接上传 GitHub 的 TienKung 机器人演示工程。它已经把模型、ONNX 策略、MuJoCo 控制器、JSON 配置、键盘命令和 DashScope 语音控制整理到同一个目录，不依赖原始 IsaacLab 训练仓库运行。
 
+## Phase 4：实机只读 Shadow Mode
+
+`feature/tienkung-real-deploy-phase4` 增加了官方 ROS2 状态适配和与 MuJoCo
+解耦的 ONNX Runtime。当前唯一允许的模式是 Shadow：读取状态、运行三份
+ONNX、计算完整 29 关节候选目标并记录日志，但不创建电机命令 publisher。
+
+```bash
+python run_real.py --config configs/real_evt2.json --check-only
+python scripts/check_real_interface.py --config configs/real_evt2.json
+```
+
+连接机器人之前必须阅读：
+
+- [官方接口审计](docs/PHASE4_OFFICIAL_INTERFACE_AUDIT.md)
+- [软件验证报告](docs/PHASE4_SOFTWARE_VALIDATION.md)
+- [实机只读部署步骤](docs/REAL_ROBOT_DEPLOYMENT_PHASE4.md)
+
 ## 当前能力
 
 | 入口 | 机器人模型 | 功能 | 验证状态 |

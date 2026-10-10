@@ -1,0 +1,79 @@
+{
+  "schema": "tienkung.hardware_contract.v1",
+  "scope": "TienKung DEX EVT2 29-motor reference; site hardware is not yet identified",
+  "official_references": {
+    "Deploy_Tienkung_3.0_commit": "9786cf1a7ed9e3bead1a8de47ed6a5c251cb1869",
+    "xSIM_MUJOCO_commit": "942469c660ec93e6d7ae9e78026db81cfa623591",
+    "xMimic_commit": "4a9f8bac4aaec07cd01b0ec9a4b1188735174983"
+  },
+  "required_confirmations": {
+    "robot_model_and_serial": {
+      "status": "unconfirmed",
+      "evidence_required": "nameplate, serial number, and vendor hardware revision"
+    },
+    "firmware_and_drive_versions": {
+      "status": "unconfirmed",
+      "evidence_required": "vendor version report from the actual robot"
+    },
+    "operating_system_and_ros2": {
+      "status": "unconfirmed",
+      "evidence_required": "target computer OS, ROS2 distribution, RMW, and bodyctrl_msgs package version"
+    },
+    "motor_count_can_ids_and_joint_names": {
+      "status": "unconfirmed",
+      "reference": "Deploy_Tienkung common/body_id_map.py",
+      "evidence_required": "read-only status capture proving all 29 IDs and physical joint correspondence"
+    },
+    "joint_zero_offsets_and_directions": {
+      "status": "unconfirmed",
+      "reference_values_are_identity": true,
+      "evidence_required": "vendor calibration and supported-joint direction test"
+    },
+    "mechanical_and_software_limits": {
+      "status": "unconfirmed",
+      "evidence_required": "hardware-specific vendor limits; simulation XML is not sufficient"
+    },
+    "imu_mount_and_frames": {
+      "status": "unconfirmed",
+      "reference": "official code consumes euler yaw,pitch,roll and body angular velocity",
+      "evidence_required": "static orientation and controlled-axis calibration capture"
+    },
+    "base_velocity_estimator": {
+      "status": "unconfirmed",
+      "evidence_required": "vendor or validated estimator topic, frame, latency, and accuracy"
+    },
+    "foot_contact_and_force_estimator": {
+      "status": "unconfirmed",
+      "evidence_required": "vendor or validated contact/force source used by READY and handoff checks"
+    },
+    "parallel_ankle_hardware_and_calibration": {
+      "status": "unconfirmed",
+      "reference": "Deploy_Tienkung sptlib_python 0.1.0",
+      "evidence_required": "mechanism revision, calibration, units, ordering, and conversion failure test"
+    },
+    "motor_command_semantics": {
+      "status": "unconfirmed",
+      "reference": "MotorCtrl{name,kp,kd,pos,spd,tor}",
+      "evidence_required": "vendor confirmation of units, update rate, limits, watchdog, and lower-level PD semantics"
+    },
+    "exclusive_control_ownership": {
+      "status": "unconfirmed",
+      "evidence_required": "vendor-approved procedure proving only one command publisher controls each motor"
+    },
+    "hardware_estop_and_protective_stop": {
+      "status": "unconfirmed",
+      "evidence_required": "on-site test of physical E-stop and vendor protective stop/recovery"
+    },
+    "mechanical_support_and_authorized_operator": {
+      "status": "unconfirmed",
+      "evidence_required": "approved support rig, clear test area, spotters, and named authorized operator"
+    }
+  },
+  "prohibitions": [
+    "Do not stop or replace the vendor controller automatically.",
+    "Do not run two motor-command publishers concurrently.",
+    "Do not treat simulation limits, identity offsets, or identity IMU rotation as robot calibration.",
+    "Do not use zero torque as a generic emergency stop.",
+    "Do not allow an LLM to alter control authority, gains, limits, or joint commands."
+  ]
+}

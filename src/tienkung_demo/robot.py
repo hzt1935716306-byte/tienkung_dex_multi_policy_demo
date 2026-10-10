@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .runtime.control_target import ControlTarget
+
 
 ALL_JOINT_NAMES = [
     "hip_roll_l_joint",
@@ -244,17 +246,6 @@ class JointMap:
     ranges: np.ndarray
     efforts: np.ndarray
     index: dict[str, int]
-
-
-@dataclass
-class ControlTarget:
-    q: np.ndarray
-    kp: np.ndarray
-    kd: np.ndarray
-    feedforward: np.ndarray
-    effort: np.ndarray
-    torque_scale: float
-    label: str
 
 
 def build_joint_map(model) -> JointMap:
